@@ -12,7 +12,7 @@ import db
 import sys, os, shutil, subprocess, json
 
 APP_VERSION = "1.0.0"
-LATEST_URL = "https://raw.githubusercontent.com/jolie-croquette/ludov-seeder/main/latest.json"
+LATEST_URL = "https://raw.githubusercontent.com/jolie-croquette/ludov-seeder/refs/heads/main/latest.json"
 
 BASE_URL = "https://ludov.inlibro.net/api/v1"
 ENDPOINT = "/biblios"       # ou "/items"
