@@ -1,13 +1,14 @@
-permissions:
-  contents: write
 name: Build and Release LUDOVSeeder
+
+permissions:
+  contents: write   # autorise la création de release ET les push git
 
 on:
   pull_request:
     types:
-      - closed   # se déclenche quand une PR est fermée
+      - closed
     branches:
-      - main     # mais uniquement si la PR cible `main`
+      - main
 
 jobs:
   build:
@@ -50,6 +51,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout repo (for pushing latest.json)
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -76,5 +82,5 @@ jobs:
           git config user.name github-actions
           git config user.email github-actions@github.com
           git add latest.json
-          git commit -m "Update latest.json to v1.${{ github.run_number }}"
+          git commit -m "Update latest.json to v1.${{ github.run_number }}" || echo "No changes to commit"
           git push
