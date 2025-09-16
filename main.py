@@ -1,8 +1,24 @@
-import os
-import re
-import getpass
-import mysql.connector
-from mysql.connector import Error
+import requests
+from requests.auth import HTTPBasicAuth
+from datetime import datetime, timedelta, time
+try:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # Python 3.9+
+except ImportError:
+    ZoneInfo = None
+    class ZoneInfoNotFoundError(Exception): ...
+    pass
+
+import db
+
+BASE_URL = "https://ludov.inlibro.net/api/v1"
+ENDPOINT = "/biblios"       # ou "/items"
+USERNAME = "apicatalogue"
+PASSWORD = "apicatalogue"
+
+PER_PAGE = 10000            # pagination serveur
+CHECK_DATE = False          # True => ne prendre que la fenêtre 5h-5h d'aujourd'hui (Toronto)
+
+ALL_BIBLIOS = []
 
 print("""
 =========================================
@@ -13,134 +29,29 @@ print("""
 =========================================
 """)
 
-DEFAULT_HOST = "localhost"
-DEFAULT_PORT = 3306
-DB_NAME = "ludov_dev"
-
-# --- SQL embarqué (corrigé & normalisé) ---
-SQL_SCHEMA = r"""
-CREATE TABLE IF NOT EXISTS `users` (
-	`id` int AUTO_INCREMENT NOT NULL UNIQUE,
-	`firstname` varchar(50) NOT NULL,
-	`lastname` varchar(100) NOT NULL,
-	`email` varchar(255) NOT NULL,
-	`password` varchar(255) NOT NULL,
-	`isAdmin` tinyint NOT NULL,
-	`lastUpdatedAt` datetime NOT NULL,
-	`createdAt` datetime NOT NULL,
-	PRIMARY KEY (`id`)
-);
-
-CREATE TABLE IF NOT EXISTS `reservations` (
-	`id` int AUTO_INCREMENT NOT NULL UNIQUE,
-	`etudiant_id` varchar(255) NOT NULL,
-	`games` json NOT NULL,
-	`console` int NOT NULL,
-	`station` int NOT NULL,
-	`date` datetime NOT NULL,
-	`archived` tinyint NOT NULL DEFAULT '0',
-	`createdAt` datetime NOT NULL,
-	PRIMARY KEY (`id`)
-);
-
-CREATE TABLE IF NOT EXISTS `consoles` (
-	`id` int AUTO_INCREMENT NOT NULL UNIQUE,
-	`accessoirs` json NOT NULL,
-	`available` tinyint NOT NULL DEFAULT '1',
-	`lastUpdatedAt` datetime NOT NULL,
-	`createdAt` datetime NOT NULL,
-	PRIMARY KEY (`id`)
-);
-
-CREATE TABLE IF NOT EXISTS `games` (
-	`id` int AUTO_INCREMENT NOT NULL UNIQUE,
-	`titre` text NOT NULL,
-	`author` text NOT NULL,
-	`biblios_id` int NOT NULL,
-	`picture` longtext NOT NULL,
-	`available` tinyint NOT NULL DEFAULT '1',
-	`createdAt` datetime NOT NULL,
-	`lastUpdatedAt` datetime NOT NULL,
-	PRIMARY KEY (`id`)
-);
-
-CREATE TABLE IF NOT EXISTS `reservation_hold` (
-	`id` int AUTO_INCREMENT NOT NULL UNIQUE,
-	`user_id` varchar(255) NOT NULL,
-	`console_id` varchar(255) NOT NULL,
-	`game1_id` varchar(255),
-	`game2_id` varchar(255),
-	`game3_id` varchar(255),
-	`station_id` int,
-	`accessoir_id` varchar(255),
-	`createdAt` datetime NOT NULL,
-	PRIMARY KEY (`id`)
-);
-
-CREATE TABLE IF NOT EXISTS `stations` (
-	`id` int AUTO_INCREMENT NOT NULL UNIQUE,
-	`consoles` json NOT NULL,
-	`lastUpdatedAt` datetime NOT NULL,
-	`createdAt` datetime NOT NULL,
-	PRIMARY KEY (`id`)
-);
-
-CREATE TABLE IF NOT EXISTS `accessoirs` (
-	`id` int AUTO_INCREMENT NOT NULL UNIQUE,
-	`name` text NOT NULL,
-	`description` longtext NOT NULL,
-	`console_id` varchar(255) NOT NULL,
-	`quantity` int NOT NULL,
-	`lastUpdatedAt` datetime NOT NULL,
-	`createdAt` datetime NOT NULL,
-	PRIMARY KEY (`id`)
-);
-
-
-ALTER TABLE `reservations` ADD CONSTRAINT `reservations_fk1` FOREIGN KEY (`etudiant_id`) REFERENCES `users`(`id`);
-
-ALTER TABLE `reservations` ADD CONSTRAINT `reservations_fk2` FOREIGN KEY (`games`) REFERENCES `games`(`id`);
-
-ALTER TABLE `reservations` ADD CONSTRAINT `reservations_fk3` FOREIGN KEY (`console`) REFERENCES `Consoles`(`id`);
-ALTER TABLE `Consoles` ADD CONSTRAINT `Consoles_fk1` FOREIGN KEY (`accessoirs`) REFERENCES `accessoirs`(`id`);
-
-ALTER TABLE `reservation_hold` ADD CONSTRAINT `reservation_hold_fk1` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`);
-
-ALTER TABLE `reservation_hold` ADD CONSTRAINT `reservation_hold_fk2` FOREIGN KEY (`console_id`) REFERENCES `Consoles`(`id`);
-
-ALTER TABLE `reservation_hold` ADD CONSTRAINT `reservation_hold_fk3` FOREIGN KEY (`game1_id`) REFERENCES `games`(`id`);
-
-ALTER TABLE `reservation_hold` ADD CONSTRAINT `reservation_hold_fk4` FOREIGN KEY (`game2_id`) REFERENCES `games`(`id`);
-
-ALTER TABLE `reservation_hold` ADD CONSTRAINT `reservation_hold_fk5` FOREIGN KEY (`game3_id`) REFERENCES `games`(`id`);
-
-ALTER TABLE `reservation_hold` ADD CONSTRAINT `reservation_hold_fk6` FOREIGN KEY (`station_id`) REFERENCES `stations`(`id`);
-
-ALTER TABLE `reservation_hold` ADD CONSTRAINT `reservation_hold_fk7` FOREIGN KEY (`accessoir_id`) REFERENCES `accessoirs`(`id`);
-ALTER TABLE `stations` ADD CONSTRAINT `stations_fk1` FOREIGN KEY (`consoles`) REFERENCES `Consoles`(`id`);
-ALTER TABLE `accessoirs` ADD CONSTRAINT `accessoirs_fk3` FOREIGN KEY (`console_id`) REFERENCES `Consoles`(`id`);
-"""
-
-SYSTEM_SCHEMAS = {"mysql", "information_schema", "performance_schema", "sys"}
-
 def main():
-    user, password, host, port = collect_connection_info()
-    conn = init_server_connection(user, password, host, port)
+    conn = db.create_connection()
     if conn is None:
         return
 
     try:
-        ensure_database(conn, DB_NAME)
-        use_database(conn, DB_NAME)
+        db.ensure_database(conn)
+        db.use_database(conn)
+        db.preview_wipe(conn)
 
-        # --- (Optionnel) vider la base avant de réimporter ---
-        preview_wipe(conn, DB_NAME)
-        if confirm(f"⚠️ Vider complètement la base '{DB_NAME}' avant import ? (o/n) : "):
-            confirm_and_wipe(conn, DB_NAME)
+        input(f"La BD sera vidée. Appuyez sur Entrée pour confirmer...")
+        db.confirm_and_wipe(conn)
 
         print("\n=== Import du SQL embarqué ===")
-        run_embedded_sql(conn, SQL_SCHEMA)
+        db.run_embedded_sql(conn)
         print("✅ Schéma importé avec succès.")
+
+        fetch_all_biblios()
+
+        seed_games_from_koha(conn)
+        seed_console_from_game(conn)
+        seed_users(conn)
+        seed_reservations(conn)
     finally:
         try:
             if conn.is_connected():
@@ -149,169 +60,155 @@ def main():
         except NameError:
             pass
 
-def collect_connection_info():
-    user = prompt("Entrer votre nom d'utilisateur de base de données : ", validator=lambda s: len(s.strip())>0, err="Username invalide.")
-    print("=========================================")
-    print(f"Votre username est : {user}")
+def get_toronto_tz():
+    if ZoneInfo:
+        try:
+            return ZoneInfo("America/Toronto")
+        except ZoneInfoNotFoundError:
+            pass
+    # fallback: fuseau local
+    return datetime.now().astimezone().tzinfo
 
-    password = prompt_password()
-    host = prompt_host()
-    port = DEFAULT_PORT
-    return user, password, host, port
+TIMEZONE = get_toronto_tz()
 
-def prompt_password():
+def window_for_today_5am_toronto():
+    now_local = datetime.now(TIMEZONE)
+    today_local = now_local.date()
+    start = datetime.combine(today_local - timedelta(days=1), time(5, 0), tzinfo=TIMEZONE)
+    end   = datetime.combine(today_local, time(5, 0), tzinfo=TIMEZONE)
+    return start, end
+
+def iso_to_toronto(iso_str: str) -> datetime:
+    # Accepte 'YYYY-MM-DDTHH:MM:SS[.fff][+tz]'
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+    except ValueError:
+        # fallback très permissif
+        try:
+            dt = datetime.strptime(iso_str[:19], "%Y-%m-%dT%H:%M:%S")
+            dt = dt.replace(tzinfo=ZoneInfo("UTC") if ZoneInfo else None)
+        except Exception:
+            return datetime.now(TIMEZONE)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo("UTC") if ZoneInfo else None)
+    return dt.astimezone(TIMEZONE)
+
+def fetch_all_biblios():
+    """Récupère toutes les biblios en une seule passe et les stocke dans ALL_BIBLIOS"""
+    global ALL_BIBLIOS
+    page = 1
+    ALL_BIBLIOS = []
+    total = 0
+    print("=== TÉLÉCHARGEMENT DES DONNÉES KOHA ===")
+
     while True:
-        pw = getpass.getpass("Entrer votre mot de passe de base de données : ").strip()
-        if not pw:
-            print("Mot de passe invalide. Veuillez réessayer.")
+        try:
+            batch = fetch_biblios_page(page)
+        except Exception as e:
+            print(f"Erreur réseau/API page {page}: {e}")
+            break
+
+        if not batch:
+            break
+
+        ALL_BIBLIOS.extend(batch)
+        total += len(batch)
+
+        if len(batch) < PER_PAGE:
+            break
+        page += 1
+
+    print(f"📦 Données Koha téléchargées : {len(ALL_BIBLIOS)} enregistrements.")
+    return ALL_BIBLIOS
+
+def fetch_biblios_page(page: int):
+    url = f"{BASE_URL}{ENDPOINT}"
+    headers = {
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip",
+        "User-Agent": "LUDOVSeeder/1.0",
+    }
+    params = {"_page": page, "_per_page": PER_PAGE}  # <-- correction
+    resp = requests.get(
+        url,
+        auth=HTTPBasicAuth(USERNAME, PASSWORD),
+        headers=headers,
+        params=params,
+        timeout=60
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+def seed_games_from_koha(conn):
+    print("\n=== SEED JEUX KOHA: démarrage ===")
+    to_upsert = []
+
+    for b in ALL_BIBLIOS:
+        if b.get("item_type") != "JEU":
             continue
-        print("=========================================")
-        return pw
 
-def prompt_host():
-    while True:
-        if confirm(f"Souhaitez-vous utiliser l'hôte par défaut ({DEFAULT_HOST}) ? (o/n) : "):
-            return DEFAULT_HOST
-        host = prompt("Entrer l'adresse de l'hôte : ",
-                      validator=is_valid_host,
-                      err="Hôte invalide. Entrez une IP (ex: 192.168.1.10) ou un nom DNS (ex: db.example.com).")
-        print("=========================================")
-        print(f"Votre hôte est : {host}")
-        if confirm("Est-ce correct ? (o/n) : "):
-            return host
+        ts_str = b.get("timestamp")
+        if not ts_str:
+            continue
+        ts_local = iso_to_toronto(ts_str)
 
-def prompt(msg, validator=None, err="Entrée invalide."):
-    while True:
-        val = input(msg).strip()
-        if validator is None or validator(val):
-            return val
-        print(err)
+        biblio_id = b.get("biblio_id")
+        if not biblio_id:
+            continue
+        try:
+            gid = int(biblio_id)
+        except Exception:
+            continue
 
-def confirm(msg):
-    return input(msg).strip().lower() in ("o","oui","y","yes")
+        title = (b.get("title") or "").strip()
+        subtitle = (b.get("subtitle") or "").strip()
+        titre = f"{title} - {subtitle}" if subtitle else title
 
-def is_valid_host(host: str) -> bool:
-    ip_ok = re.match(r"^(?:\d{1,3}\.){3}\d{1,3}$", host) is not None
-    dns_ok = re.match(r"^(?:(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,})$", host) is not None
-    localhost_ok = host == "localhost"
-    return ip_ok or dns_ok or localhost_ok
+        author = (b.get("author") or None)
+        picture = ""  
+        available = 1
 
-def init_server_connection(db_user, db_password, host, port):
-    print("=========================================")
-    print(f"Tentative de connexion MySQL vers {host}:{port} avec l'utilisateur '{db_user}'...")
-    try:
-        conn = mysql.connector.connect(
-            host=host,
-            port=port,
-            user=db_user,
-            password=db_password,
-            autocommit=True,
-        )
-        if conn.is_connected():
-            print("Connexion au serveur réussie.")
-            return conn
-    except Error as e:
-        print_sql_error("Erreur lors de la connexion au serveur MySQL", e)
-        return None
+        to_upsert.append((
+            gid, titre, gid, author, picture, available,
+            ts_local.strftime("%Y-%m-%d %H:%M:%S"),
+        ))
 
-def ensure_database(conn, dbname):
-    if dbname in SYSTEM_SCHEMAS:
-        raise RuntimeError(f"Refus: '{dbname}' est un schéma système.")
-    cur = conn.cursor()
-    try:
-        cur.execute(f"CREATE DATABASE IF NOT EXISTS `{dbname}` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci")
-        print(f"✓ Base vérifiée/créée : {dbname}")
-    finally:
-        cur.close()
-
-def use_database(conn, dbname):
-    cur = conn.cursor()
-    try:
-        cur.execute(f"USE `{dbname}`")
-        print(f"Utilisation de la base `{dbname}`.")
-    finally:
-        cur.close()
-
-def preview_wipe(conn, dbname):
-    cur = conn.cursor()
-    print("Inventaire des objets à supprimer dans la base :", dbname)
-
-    def fetch_list(query, params=None):
-        cur.execute(query, params or ())
-        return [row[0] for row in cur.fetchall()]
-
-    views = fetch_list("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA=%s", (dbname,))
-    triggers = fetch_list("SELECT TRIGGER_NAME FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA=%s", (dbname,))
-    events = fetch_list("SELECT EVENT_NAME FROM INFORMATION_SCHEMA.EVENTS WHERE EVENT_SCHEMA=%s", (dbname,))
-    procs = fetch_list("SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA=%s AND ROUTINE_TYPE='PROCEDURE'", (dbname,))
-    funcs = fetch_list("SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA=%s AND ROUTINE_TYPE='FUNCTION'", (dbname,))
-    tables = fetch_list("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=%s AND TABLE_TYPE='BASE TABLE'", (dbname,))
-
-    print(f"- Vues       : {len(views)} -> {views}")
-    print(f"- Triggers   : {len(triggers)} -> {triggers}")
-    print(f"- Events     : {len(events)} -> {events}")
-    print(f"- Procédures : {len(procs)} -> {procs}")
-    print(f"- Fonctions  : {len(funcs)} -> {funcs}")
-    print(f"- Tables     : {len(tables)} -> {tables}")
-    cur.close()
-
-def confirm_and_wipe(conn, dbname):
-    cur = conn.cursor()
-    try:
-        cur.execute("SET FOREIGN_KEY_CHECKS=0")
-
-        cur.execute("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA=%s", (dbname,))
-        for (vname,) in cur.fetchall(): cur.execute(f"DROP VIEW IF EXISTS `{vname}`")
-
-        cur.execute("SELECT TRIGGER_NAME FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA=%s", (dbname,))
-        for (tname,) in cur.fetchall():
-            try: cur.execute(f"DROP TRIGGER `{tname}`")
-            except Error: pass
-
-        cur.execute("SELECT EVENT_NAME FROM INFORMATION_SCHEMA.EVENTS WHERE EVENT_SCHEMA=%s", (dbname,))
-        for (ename,) in cur.fetchall():
-            try: cur.execute(f"DROP EVENT IF EXISTS `{ename}`")
-            except Error: pass
-
-        cur.execute("SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA=%s AND ROUTINE_TYPE='PROCEDURE'", (dbname,))
-        for (pname,) in cur.fetchall():
-            try: cur.execute(f"DROP PROCEDURE IF EXISTS `{pname}`")
-            except Error: pass
-        cur.execute("SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA=%s AND ROUTINE_TYPE='FUNCTION'", (dbname,))
-        for (fname,) in cur.fetchall():
-            try: cur.execute(f"DROP FUNCTION IF EXISTS `{fname}`")
-            except Error: pass
-
-        cur.execute("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=%s AND TABLE_TYPE='BASE TABLE'", (dbname,))
-        for (tname,) in cur.fetchall(): cur.execute(f"DROP TABLE IF EXISTS `{tname}`")
-
-        print("✅ Base vidée avec succès.")
-    except Error as e:
-        print_sql_error("❌ Erreur pendant la suppression", e)
-    finally:
-        try: cur.execute("SET FOREIGN_KEY_CHECKS=1")
-        except Error: pass
-        cur.close()
-
-def run_embedded_sql(conn, sql_text: str):
-    cur = conn.cursor()
-    try:
-        statements = [s.strip() for s in sql_text.split(";") if s.strip()]
-        for stmt in statements:
-            try:
-                cur.execute(stmt)
-            except Error as e:
-                print_sql_error(f"Erreur sur la requête : {stmt[:80]}...", e)
-        print("✓ SQL embarqué exécuté.")
-    finally:
-        cur.close()
+    if not to_upsert:
+        print("Aucun jeu à insérer.")
+        return
+    
+    db.insertGameIntoDatabase(conn, to_upsert)
 
 
-def print_sql_error(prefix, e: Error):
-    err_no = getattr(e, "errno", None)
-    sqlstate = getattr(e, "sqlstate", None)
-    msg = getattr(e, "msg", str(e))
-    print(f"{prefix} : [{err_no}/{sqlstate}] {msg}")
+
+def seed_console_from_game(conn):
+    to_upsert = []
+
+    for b in ALL_BIBLIOS:
+        if b.get("item_type") != "JEU":
+            continue
+        
+        name = (b.get("edition_statement") or None)
+        if not name:
+            continue
+
+        to_upsert.append((name,))
+
+    if not to_upsert:
+        print("Aucune console à insérer.")
+        return
+    
+    db.insert_console(conn, to_upsert)
+
+
+
+def seed_users(conn):
+    user = [
+        
+    ]
+
+def seed_reservations(conn):
+    reservations = []
 
 if __name__ == "__main__":
     main()
