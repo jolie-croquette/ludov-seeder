@@ -103,7 +103,6 @@ def get_toronto_tz():
             return ZoneInfo("America/Toronto")
         except ZoneInfoNotFoundError:
             pass
-    # fallback: fuseau local
     return datetime.now().astimezone().tzinfo
 
 TIMEZONE = get_toronto_tz()
