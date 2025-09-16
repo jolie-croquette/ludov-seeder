@@ -115,9 +115,11 @@ def window_for_today_5am_toronto():
     return start, end
 
 def iso_to_toronto(iso_str: str) -> datetime:
+    # Accepte 'YYYY-MM-DDTHH:MM:SS[.fff][+tz]'
     try:
         dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
     except ValueError:
+        # fallback très permissif
         try:
             dt = datetime.strptime(iso_str[:19], "%Y-%m-%dT%H:%M:%S")
             dt = dt.replace(tzinfo=ZoneInfo("UTC") if ZoneInfo else None)
