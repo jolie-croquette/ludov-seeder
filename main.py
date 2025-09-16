@@ -9,6 +9,10 @@ except ImportError:
     pass
 
 import db
+import sys, os, shutil, subprocess, json
+
+APP_VERSION = "1.0.0"
+LATEST_URL = "https://raw.githubusercontent.com/jolie-croquette/ludov-seeder/main/latest.json"
 
 BASE_URL = "https://ludov.inlibro.net/api/v1"
 ENDPOINT = "/biblios"       # ou "/items"
@@ -28,6 +32,39 @@ print("""
    Date : 16/09/2025
 =========================================
 """)
+
+def check_for_update():
+    try:
+        resp = requests.get(LATEST_URL, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        latest_version = data["version"]
+        download_url = data["url"]
+
+        if latest_version != APP_VERSION:
+            print(f"🔄 Nouvelle version {latest_version} trouvée (actuelle {APP_VERSION})")
+            update_app(download_url)
+        else:
+            print("✅ Application à jour")
+    except Exception as e:
+        print(f"⚠ Impossible de vérifier les mises à jour : {e}")
+
+def update_app(download_url):
+    exe_path = sys.argv[0]
+    new_path = exe_path + ".new"
+
+    print("⬇ Téléchargement de la mise à jour...")
+    with requests.get(download_url, stream=True) as r:
+        r.raise_for_status()
+        with open(new_path, "wb") as f:
+            shutil.copyfileobj(r.raw, f)
+
+    print("🔄 Remplacement de l'exécutable...")
+    os.replace(new_path, exe_path)
+
+    print("🚀 Redémarrage...")
+    subprocess.Popen([exe_path] + sys.argv[1:])
+    sys.exit(0)
 
 def main():
     conn = db.create_connection()
@@ -211,4 +248,5 @@ def seed_reservations(conn):
     reservations = []
 
 if __name__ == "__main__":
+    check_for_update()
     main()
