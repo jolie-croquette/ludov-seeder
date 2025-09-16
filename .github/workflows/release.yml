@@ -68,6 +68,7 @@ jobs:
           tag_name: v1.${{ github.run_number }}
           name: "LUDOVSeeder v1.${{ github.run_number }}"
           body: "Version générée automatiquement après merge de PR."
+          fail_on_existing: false
           draft: false
           prerelease: false
           files: |
