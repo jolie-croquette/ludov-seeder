@@ -174,6 +174,7 @@ def fetch_biblios_page(page: int):
     )
     resp.raise_for_status()
     return resp.json()
+
 def seed_games_from_koha(conn):
     print("\n=== SEED JEUX KOHA: démarrage ===")
     to_upsert = []
@@ -214,8 +215,6 @@ def seed_games_from_koha(conn):
     
     db.insertGameIntoDatabase(conn, to_upsert)
 
-
-
 def seed_console_from_game(conn):
     to_upsert = []
 
@@ -235,12 +234,8 @@ def seed_console_from_game(conn):
     
     db.insert_console(conn, to_upsert)
 
-
-
 def seed_users(conn):
-    user = [
-        
-    ]
+    user = []
 
 def seed_reservations(conn):
     reservations = []
