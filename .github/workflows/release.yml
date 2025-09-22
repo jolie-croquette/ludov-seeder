@@ -1,14 +1,12 @@
 name: Build and Release LUDOVSeeder
 
 permissions:
-  contents: write   # autorise la création de release ET les push git
+  contents: write   # push main + créer des releases
 
 on:
   pull_request:
-    types:
-      - closed
-    branches:
-      - main
+    types: [closed]
+    branches: [main]
 
 jobs:
   build:
@@ -32,12 +30,29 @@ jobs:
       - name: Build executable
         run: |
           pyinstaller --onefile --name LUDOVSeeder main.py
-        shell: powershell
+        shell: pwsh
 
-      - name: Copy config.json
+      # (Optionnel) Signature de l'EXE si tu as un cert PFX en secrets
+      # - name: Prepare code signing cert
+      #   if: ${{ secrets.PFX_BASE64 && secrets.PFX_PASSWORD }}
+      #   run: |
+      #     $bytes = [Convert]::FromBase64String("${{ secrets.PFX_BASE64 }}")
+      #     [IO.File]::WriteAllBytes("codesign.pfx", $bytes)
+      #   shell: pwsh
+      #
+      # - name: Sign exe
+      #   if: ${{ secrets.PFX_BASE64 && secrets.PFX_PASSWORD }}
+      #   run: |
+      #     & "C:\Program Files (x86)\Windows Kits\10\bin\x64\signtool.exe" sign `
+      #        /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+      #        /f codesign.pfx /p "${{ secrets.PFX_PASSWORD }}" `
+      #        dist\LUDOVSeeder.exe
+      #   shell: pwsh
+
+      - name: Copy config.json (exemple/dev)
         run: |
-          echo { \"DB_HOST\": \"localhost\", \"DB_PORT\": 3306, \"DB_USER\": \"root\", \"DB_PASSWORD\": \"\", \"DB_NAME\": \"ludov_dev\" } > dist/config.json
-        shell: bash
+          Set-Content -Encoding UTF8 dist\config.json '{ "DB_HOST":"localhost","DB_PORT":3306,"DB_USER":"root","DB_PASSWORD":"","DB_NAME":"ludov_dev" }'
+        shell: pwsh
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -66,14 +81,19 @@ jobs:
         run: |
           git tag v1.${{ github.run_number }}
           git push origin v1.${{ github.run_number }}
-          
+
+      - name: Compute SHA-256 of EXE
+        id: sha
+        run: |
+          sha256sum dist/LUDOVSeeder.exe | awk '{print $1}' > sha.txt
+          echo "sha256=$(cat sha.txt)" >> $GITHUB_OUTPUT
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v1.${{ github.run_number }}
           name: "LUDOVSeeder v1.${{ github.run_number }}"
           body: "Version générée automatiquement après merge de PR."
-          fail_on_existing: false
           draft: false
           prerelease: false
           files: |
@@ -82,11 +102,25 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update latest.json
+      - name: Update latest.json on main (version, tag, url, sha256)
         run: |
-          echo "{\"version\": \"v1.${{ github.run_number }}\", \"url\": \"https://github.com/${{ github.repository }}/releases/download/v1.${{ github.run_number }}/LUDOVSeeder.exe\"}" > latest.json
-          git config user.name github-actions
-          git config user.email github-actions@github.com
+          VERSION="1.${{ github.run_number }}"        # sans le 'v'
+          TAG="v$VERSION"
+          URL="https://github.com/${{ github.repository }}/releases/download/$TAG/LUDOVSeeder.exe"
+          SHA="${{ steps.sha.outputs.sha256 }}"
+
+          cat > latest.json <<EOF
+          {
+            "version": "$VERSION",
+            "tag": "$TAG",
+            "url": "$URL",
+            "sha256": "$SHA",
+            "notes": "Release $TAG"
+          }
+          EOF
+
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
           git add latest.json
-          git commit -m "Update latest.json to v1.${{ github.run_number }}" || echo "No changes to commit"
+          git commit -m "latest.json -> $TAG" || echo "No changes to commit"
           git push
