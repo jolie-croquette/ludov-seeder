@@ -1,6 +1,6 @@
 import requests
 from requests.auth import HTTPBasicAuth
-from datetime import datetime, timedelta, time, timezone  # <-- ajoute timezone
+from datetime import datetime, timedelta, time
 try:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # Python 3.9+
 except ImportError:
@@ -10,16 +10,8 @@ except ImportError:
 
 import db
 import sys, os, shutil, subprocess, json
-import hashlib, tempfile, textwrap
 
-def _sha256(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024*1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-APP_VERSION = "1.5"
+APP_VERSION = "1.9"
 LATEST_URL = "https://raw.githubusercontent.com/jolie-croquette/ludov-seeder/refs/heads/main/latest.json"
 
 BASE_URL = "https://ludov.inlibro.net/api/v1"
@@ -28,118 +20,50 @@ USERNAME = "apicatalogue"
 PASSWORD = "apicatalogue"
 
 PER_PAGE = 10000            # pagination serveur
+CHECK_DATE = False          # True => ne prendre que la fenêtre 5h-5h d'aujourd'hui (Toronto)
 
 ALL_BIBLIOS = []
 
-print(f"""
+print("""
 =========================================
    LUDOV SEEDER
    Générateur de données pour LUDOV
    Auteur : jolie-croquette
    Date : 16/09/2025
-   Version actuelle : {APP_VERSION}
 =========================================
 """)
 
 def check_for_update():
-    resp = requests.get(LATEST_URL, headers={"Cache-Control":"no-cache"}, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
+    try:
+        resp = requests.get(LATEST_URL, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        latest_version = data["version"]
+        download_url = data["url"]
 
-    latest_version = data.get("version")
-    latest_tag     = data.get("tag")       # ex: "v1.6"
-    download_url   = data.get("url")
-    expected_sha   = data.get("sha256")
+        if latest_version != APP_VERSION:
+            print(f"🔄 Nouvelle version {latest_version} trouvée (actuelle {APP_VERSION})")
+            update_app(download_url)
+        else:
+            print("✅ Application à jour")
+    except Exception as e:
+        print(f"⚠ Impossible de vérifier les mises à jour : {e}")
 
-    if not latest_version or not download_url:
-        print("⚠ latest.json incomplet.")
-        return
+def update_app(download_url):
+    exe_path = sys.argv[0]
+    new_path = exe_path + ".new"
 
-    if latest_version == APP_VERSION:
-        print("✅ Application à jour")
-        return
-
-    # (optionnel) cohérence tag/URL
-    if latest_tag and f"/{latest_tag}/" not in download_url:
-        print(f"⚠ Incohérence: l'URL ne contient pas le tag {latest_tag}")
-
-    print(f"🔄 Nouvelle version {latest_version} trouvée (actuelle {APP_VERSION})")
-    update_app(download_url, expected_sha)   # <- on passe le sha
-
-
-def update_app(download_url, expected_sha256: str | None):
-    exe_path = os.path.abspath(getattr(sys, "executable", sys.argv[0]))
-    exe_dir  = os.path.dirname(exe_path)
-
-    # 1) Téléchargement -> fichier temp
-    with requests.get(download_url, stream=True, timeout=60) as r:
+    print("⬇ Téléchargement de la mise à jour...")
+    with requests.get(download_url, stream=True) as r:
         r.raise_for_status()
-        fd, tmp_path = tempfile.mkstemp(prefix="ludov-update-", suffix=".exe")
-        os.close(fd)
-        with open(tmp_path, "wb") as f:
+        with open(new_path, "wb") as f:
             shutil.copyfileobj(r.raw, f)
 
-    # 2) Vérif d'intégrité
-    if expected_sha256:
-        got = _sha256(tmp_path)
-        if got.lower() != expected_sha256.lower():
-            try: os.remove(tmp_path)
-            except: pass
-            print("❌ Hash invalide — mise à jour annulée.")
-            return
+    print("🔄 Remplacement de l'exécutable...")
+    os.replace(new_path, exe_path)
 
-    # 3) Génère un updater PowerShell qui SANS -ArgumentList si vide
-    ps_code = r"""
-param(
-  [string]$OldPath,
-  [string]$TmpPath,
-  [string]$Args
-)
-
-$retries = 50
-while ($retries -gt 0) {
-  try {
-    $fs = [System.IO.File]::Open($OldPath,'Open','ReadWrite','None')
-    $fs.Close()
-    break
-  } catch {
-    Start-Sleep -Milliseconds 200
-    $retries -= 1
-  }
-}
-
-if (Test-Path ($OldPath + ".bak")) { Remove-Item ($OldPath + ".bak") -Force -ErrorAction SilentlyContinue }
-Move-Item -LiteralPath $OldPath -Destination ($OldPath + ".bak") -Force
-Move-Item -LiteralPath $TmpPath -Destination $OldPath -Force
-
-$psi = @{ FilePath = $OldPath }
-if (-not [string]::IsNullOrWhiteSpace($Args)) {
-  $psi["ArgumentList"] = $Args
-}
-Start-Process @psi
-"""
-    scripts_dir = tempfile.mkdtemp(prefix="ludov-updater-")
-    ps_path = os.path.join(scripts_dir, "updater.ps1")
-    with open(ps_path, "w", encoding="utf-8") as f:
-        f.write(textwrap.dedent(ps_code).strip())
-
-    # arguments à relayer (peut être vide)
-    args = " ".join(f'"{a}"' for a in sys.argv[1:]) if len(sys.argv) > 1 else ""
-
-    try:
-        subprocess.Popen([
-            "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-            "-File", ps_path,
-            exe_path,
-            tmp_path,
-            args
-        ], cwd=exe_dir, close_fds=True)
-        print("🚀 Mise à jour en cours…")
-    except Exception as e:
-        print(f"❌ Échec du lanceur de mise à jour : {e}")
-        try: os.remove(tmp_path)
-        except: pass
-        return
+    print("🚀 Redémarrage...")
+    subprocess.Popen([exe_path] + sys.argv[1:])
     sys.exit(0)
 
 def main():
@@ -190,20 +114,20 @@ def window_for_today_5am_toronto():
     end   = datetime.combine(today_local, time(5, 0), tzinfo=TIMEZONE)
     return start, end
 
-
 def iso_to_toronto(iso_str: str) -> datetime:
+    # Accepte 'YYYY-MM-DDTHH:MM:SS[.fff][+tz]'
     try:
         dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
     except ValueError:
+        # fallback très permissif
         try:
             dt = datetime.strptime(iso_str[:19], "%Y-%m-%dT%H:%M:%S")
-            dt = dt.replace(tzinfo=timezone.utc)  # <-- au lieu de ZoneInfo("UTC") ou None
+            dt = dt.replace(tzinfo=ZoneInfo("UTC") if ZoneInfo else None)
         except Exception:
             return datetime.now(TIMEZONE)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)      # <-- idem ici
+        dt = dt.replace(tzinfo=ZoneInfo("UTC") if ZoneInfo else None)
     return dt.astimezone(TIMEZONE)
-
 
 def fetch_all_biblios():
     """Récupère toutes les biblios en une seule passe et les stocke dans ALL_BIBLIOS"""
@@ -292,21 +216,23 @@ def seed_games_from_koha(conn):
     db.insertGameIntoDatabase(conn, to_upsert)
 
 def seed_console_from_game(conn):
-    print("\n=== SEED CONSOLES: démarrage ===")
-    names = set()
+    to_upsert = []
+
     for b in ALL_BIBLIOS:
         if b.get("item_type") != "JEU":
             continue
-        name = (b.get("edition_statement") or "").strip()
-        if name:
-            names.add(name)
+        
+        name = (b.get("edition_statement") or None)
+        if not name:
+            continue
 
-    to_upsert = [(n,) for n in sorted(names)]
+        to_upsert.append((name,))
+
     if not to_upsert:
         print("Aucune console à insérer.")
         return
+    
     db.insert_console(conn, to_upsert)
-
 
 def seed_users(conn):
     user = []
@@ -315,5 +241,4 @@ def seed_reservations(conn):
     reservations = []
 
 if __name__ == "__main__":
-    check_for_update()
     main()

@@ -1,6 +1,6 @@
 import json
 import mysql.connector
-from mysql.connector import Error, errorcode
+from mysql.connector import Error
 from typing import Any, Dict
 
 FILE_PATH = "config.json"
@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS `reservation_hold` (
   `game2_id` INT NULL,                  -- corrigé: INT
   `game3_id` INT NULL,                  -- corrigé: INT
   `station_id` INT NULL,
-  `accessoire_id` INT NULL,              -- corrigé: INT
+  `accessoir_id` INT NULL,              -- corrigé: INT
   `createdAt` DATETIME NOT NULL,
   PRIMARY KEY (`id`),
   KEY `ix_hold_user` (`user_id`),
@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS `reservation_hold` (
   KEY `ix_hold_game2` (`game2_id`),
   KEY `ix_hold_game3` (`game3_id`),
   KEY `ix_hold_station` (`station_id`),
-  KEY `ix_hold_accessoire` (`accessoire_id`)
+  KEY `ix_hold_accessoir` (`accessoir_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ============
@@ -154,10 +154,10 @@ ALTER TABLE `reservation_hold`
   FOREIGN KEY (`station_id`) REFERENCES `stations`(`id`)
   ON UPDATE CASCADE ON DELETE SET NULL;
 
--- reservation_hold.accessoire_id -> accessoires.id
+-- reservation_hold.accessoir_id -> accessoires.id
 ALTER TABLE `reservation_hold`
   ADD CONSTRAINT `reservation_hold_fk7`
-  FOREIGN KEY (`accessoire_id`) REFERENCES `accessoires`(`id`)
+  FOREIGN KEY (`accessoir_id`) REFERENCES `accessoires`(`id`)
   ON UPDATE CASCADE ON DELETE SET NULL;
 
 -- (supprimé) stations.consoles JSON -> consoles.id  ❌ impossible en FK
@@ -193,48 +193,20 @@ CONFIG = get_config()
 
 def create_connection() -> mysql.connector.MySQLConnection:
     """Crée une connexion MySQL en utilisant les paramètres du fichier config.json."""
-    dbname = CONFIG["DB_NAME"]
     try:
         conn = mysql.connector.connect(
             host=CONFIG["DB_HOST"],
             port=CONFIG["DB_PORT"],
             user=CONFIG["DB_USER"],
             password=CONFIG["DB_PASSWORD"],
-            database=dbname,
-            auth_plugin='mysql_native_password',
-            use_pure=True
+            database=CONFIG["DB_NAME"],
+            auth_plugin='mysql_native_password'
         )
         if conn.is_connected():
             return conn
-        raise ConnectionError("❌ Failed to connect to the database.")
+        else:
+            raise ConnectionError("❌ Failed to connect to the database.")
     except Error as e:
-        if getattr(e, "errno", None) == errorcode.ER_BAD_DB_ERROR:
-            server_conn = mysql.connector.connect(
-                host=CONFIG["DB_HOST"],
-                port=CONFIG["DB_PORT"],
-                user=CONFIG["DB_USER"],
-                password=CONFIG["DB_PASSWORD"],
-                auth_plugin='mysql_native_password'
-            )
-            try:
-                ensure_database(server_conn)  # crée la DB
-            finally:
-                try: server_conn.close()
-                except: pass
-                            
-            # Reconnexion sur la DB désormais existante
-            conn = mysql.connector.connect(
-                host=CONFIG["DB_HOST"],
-                port=CONFIG["DB_PORT"],
-                user=CONFIG["DB_USER"],
-                password=CONFIG["DB_PASSWORD"],
-                database=dbname,
-                auth_plugin='mysql_native_password'
-            )
-            if conn.is_connected():
-                return conn
-            raise ConnectionError("❌ Failed to connect to the database after creating it.")
-        # 3) Autres erreurs : on propage
         raise ConnectionError(f"Database connection error: {e}")
 
 def ensure_database(conn):
@@ -243,20 +215,7 @@ def ensure_database(conn):
         raise RuntimeError(f"Refus: '{dbname}' est un schéma système.")
     cur = conn.cursor()
     try:
-        try:
-            cur.execute(
-                f"CREATE DATABASE IF NOT EXISTS `{dbname}` "
-                f"CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
-            )
-        except Error as e:
-            # Si la collation n'est pas reconnue (ex. MariaDB), on retente avec une collation universelle
-            if getattr(e, "errno", None) == errorcode.ER_UNKNOWN_COLLATION:
-                cur.execute(
-                    f"CREATE DATABASE IF NOT EXISTS `{dbname}` "
-                    f"CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-                )
-            else:
-                raise
+        cur.execute(f"CREATE DATABASE IF NOT EXISTS `{dbname}` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci")
         print(f"✓ Base vérifiée/créée : {dbname}")
     finally:
         cur.close()
@@ -386,7 +345,7 @@ def insert_console(conn, consoles):
             cur.close()
         except Exception:
             pass
-    print("=== SEED CONSOLES: terminé ===\n")
+    print("=== SEED JEUX KOHA: terminé ===\n")
 
 def print_sql_error(prefix, e: Error):
     err_no = getattr(e, "errno", None)
