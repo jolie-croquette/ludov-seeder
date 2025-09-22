@@ -19,7 +19,7 @@ def _sha256(path: str) -> str:
             h.update(chunk)
     return h.hexdigest()
 
-APP_VERSION = "1.5"
+APP_VERSION = "1.7"
 LATEST_URL = "https://raw.githubusercontent.com/jolie-croquette/ludov-seeder/refs/heads/main/latest.json"
 
 BASE_URL = "https://ludov.inlibro.net/api/v1"
@@ -31,12 +31,13 @@ PER_PAGE = 10000            # pagination serveur
 
 ALL_BIBLIOS = []
 
-print("""
+print(f"""
 =========================================
    LUDOV SEEDER
    Générateur de données pour LUDOV
    Auteur : jolie-croquette
    Date : 16/09/2025
+   Version actuelle : {APP_VERSION}
 =========================================
 """)
 
