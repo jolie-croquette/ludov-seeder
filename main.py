@@ -1,6 +1,6 @@
 import requests
 from requests.auth import HTTPBasicAuth
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, timezone  # <-- ajoute timezone
 try:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # Python 3.9+
 except ImportError:
@@ -10,8 +10,16 @@ except ImportError:
 
 import db
 import sys, os, shutil, subprocess, json
+import hashlib, tempfile, textwrap
 
-APP_VERSION = "1.0.0"
+def _sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024*1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+APP_VERSION = "1.5"
 LATEST_URL = "https://raw.githubusercontent.com/jolie-croquette/ludov-seeder/refs/heads/main/latest.json"
 
 BASE_URL = "https://ludov.inlibro.net/api/v1"
@@ -20,7 +28,6 @@ USERNAME = "apicatalogue"
 PASSWORD = "apicatalogue"
 
 PER_PAGE = 10000            # pagination serveur
-CHECK_DATE = False          # True => ne prendre que la fenêtre 5h-5h d'aujourd'hui (Toronto)
 
 ALL_BIBLIOS = []
 
@@ -50,20 +57,83 @@ def check_for_update():
         print(f"⚠ Impossible de vérifier les mises à jour : {e}")
 
 def update_app(download_url):
-    exe_path = sys.argv[0]
-    new_path = exe_path + ".new"
-
-    print("⬇ Téléchargement de la mise à jour...")
-    with requests.get(download_url, stream=True) as r:
+    # Essaie de lire le sha256 depuis latest.json si présent
+    expected_sha256 = None
+    try:
+        r = requests.get(LATEST_URL, timeout=10)
         r.raise_for_status()
-        with open(new_path, "wb") as f:
+        expected_sha256 = (r.json() or {}).get("sha256")
+    except Exception:
+        pass  # on continue même sans hash (mais c’est mieux avec)
+
+    # IMPORTANT: sous PyInstaller / exe, le binaire courant est sys.executable (plus fiable que argv[0])
+    exe_path = os.path.abspath(getattr(sys, "executable", sys.argv[0]))
+    exe_dir = os.path.dirname(exe_path)
+
+    # 1) Télécharger l’update vers un fichier temporaire
+    with requests.get(download_url, stream=True, timeout=60) as r:
+        r.raise_for_status()
+        fd, tmp_path = tempfile.mkstemp(prefix="ludov-update-", suffix=".exe")
+        os.close(fd)
+        with open(tmp_path, "wb") as f:
             shutil.copyfileobj(r.raw, f)
 
-    print("🔄 Remplacement de l'exécutable...")
-    os.replace(new_path, exe_path)
+    # 2) Vérifier le hash si fourni
+    if expected_sha256:
+        got = _sha256(tmp_path)
+        if got.lower() != expected_sha256.lower():
+            try: os.remove(tmp_path)
+            except: pass
+            print("❌ Hash invalide — mise à jour annulée.")
+            return
 
-    print("🚀 Redémarrage...")
-    subprocess.Popen([exe_path] + sys.argv[1:])
+    # 3) Générer un mini updater PowerShell qui fait le swap à froid (moins “suspect” pour les AV)
+    ps_code = r"""
+param(
+  [string]$OldPath,
+  [string]$TmpPath,
+  [string]$Args
+)
+# Attendre la libération du fichier
+$retries = 50
+while ($retries -gt 0) {
+  try {
+    $fs = [System.IO.File]::Open($OldPath,'Open','ReadWrite','None')
+    $fs.Close()
+    break
+  } catch {
+    Start-Sleep -Milliseconds 200
+    $retries -= 1
+  }
+}
+# Sauvegarde ancienne version et swap
+if (Test-Path ($OldPath + ".bak")) { Remove-Item ($OldPath + ".bak") -Force -ErrorAction SilentlyContinue }
+Move-Item -LiteralPath $OldPath -Destination ($OldPath + ".bak") -Force
+Move-Item -LiteralPath $TmpPath -Destination $OldPath -Force
+# Relancer l’app
+Start-Process -FilePath $OldPath -ArgumentList $Args
+"""
+    scripts_dir = tempfile.mkdtemp(prefix="ludov-updater-")
+    ps_path = os.path.join(scripts_dir, "updater.ps1")
+    with open(ps_path, "w", encoding="utf-8") as f:
+        f.write(textwrap.dedent(ps_code).strip())
+
+    args = " ".join(map(lambda a: f'"{a}"', sys.argv[1:]))
+
+    try:
+        subprocess.Popen([
+            "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", ps_path,
+            exe_path,
+            tmp_path,
+            args
+        ], cwd=exe_dir, close_fds=True)
+        print("🚀 Mise à jour en cours…")
+    except Exception as e:
+        print(f"❌ Échec du lanceur de mise à jour : {e}")
+        try: os.remove(tmp_path)
+        except: pass
+        return
     sys.exit(0)
 
 def main():
@@ -114,20 +184,20 @@ def window_for_today_5am_toronto():
     end   = datetime.combine(today_local, time(5, 0), tzinfo=TIMEZONE)
     return start, end
 
+
 def iso_to_toronto(iso_str: str) -> datetime:
-    # Accepte 'YYYY-MM-DDTHH:MM:SS[.fff][+tz]'
     try:
         dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
     except ValueError:
-        # fallback très permissif
         try:
             dt = datetime.strptime(iso_str[:19], "%Y-%m-%dT%H:%M:%S")
-            dt = dt.replace(tzinfo=ZoneInfo("UTC") if ZoneInfo else None)
+            dt = dt.replace(tzinfo=timezone.utc)  # <-- au lieu de ZoneInfo("UTC") ou None
         except Exception:
             return datetime.now(TIMEZONE)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=ZoneInfo("UTC") if ZoneInfo else None)
+        dt = dt.replace(tzinfo=timezone.utc)      # <-- idem ici
     return dt.astimezone(TIMEZONE)
+
 
 def fetch_all_biblios():
     """Récupère toutes les biblios en une seule passe et les stocke dans ALL_BIBLIOS"""
@@ -216,23 +286,21 @@ def seed_games_from_koha(conn):
     db.insertGameIntoDatabase(conn, to_upsert)
 
 def seed_console_from_game(conn):
-    to_upsert = []
-
+    print("\n=== SEED CONSOLES: démarrage ===")
+    names = set()
     for b in ALL_BIBLIOS:
         if b.get("item_type") != "JEU":
             continue
-        
-        name = (b.get("edition_statement") or None)
-        if not name:
-            continue
+        name = (b.get("edition_statement") or "").strip()
+        if name:
+            names.add(name)
 
-        to_upsert.append((name,))
-
+    to_upsert = [(n,) for n in sorted(names)]
     if not to_upsert:
         print("Aucune console à insérer.")
         return
-    
     db.insert_console(conn, to_upsert)
+
 
 def seed_users(conn):
     user = []
@@ -241,4 +309,5 @@ def seed_reservations(conn):
     reservations = []
 
 if __name__ == "__main__":
+    check_for_update()
     main()
