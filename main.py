@@ -19,7 +19,7 @@ def _sha256(path: str) -> str:
             h.update(chunk)
     return h.hexdigest()
 
-APP_VERSION = "1.7"
+APP_VERSION = "1.5"
 LATEST_URL = "https://raw.githubusercontent.com/jolie-croquette/ludov-seeder/refs/heads/main/latest.json"
 
 BASE_URL = "https://ludov.inlibro.net/api/v1"
@@ -42,36 +42,36 @@ print(f"""
 """)
 
 def check_for_update():
-    try:
-        resp = requests.get(LATEST_URL, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        latest_version = data["version"]
-        download_url = data["url"]
+    resp = requests.get(LATEST_URL, headers={"Cache-Control":"no-cache"}, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
 
-        if latest_version != APP_VERSION:
-            print(f"🔄 Nouvelle version {latest_version} trouvée (actuelle {APP_VERSION})")
-            update_app(download_url)
-        else:
-            print("✅ Application à jour")
-    except Exception as e:
-        print(f"⚠ Impossible de vérifier les mises à jour : {e}")
+    latest_version = data.get("version")
+    latest_tag     = data.get("tag")       # ex: "v1.6"
+    download_url   = data.get("url")
+    expected_sha   = data.get("sha256")
 
-def update_app(download_url):
-    # Essaie de lire le sha256 depuis latest.json si présent
-    expected_sha256 = None
-    try:
-        r = requests.get(LATEST_URL, timeout=10)
-        r.raise_for_status()
-        expected_sha256 = (r.json() or {}).get("sha256")
-    except Exception:
-        pass  # on continue même sans hash (mais c’est mieux avec)
+    if not latest_version or not download_url:
+        print("⚠ latest.json incomplet.")
+        return
 
-    # IMPORTANT: sous PyInstaller / exe, le binaire courant est sys.executable (plus fiable que argv[0])
+    if latest_version == APP_VERSION:
+        print("✅ Application à jour")
+        return
+
+    # (optionnel) cohérence tag/URL
+    if latest_tag and f"/{latest_tag}/" not in download_url:
+        print(f"⚠ Incohérence: l'URL ne contient pas le tag {latest_tag}")
+
+    print(f"🔄 Nouvelle version {latest_version} trouvée (actuelle {APP_VERSION})")
+    update_app(download_url, expected_sha)   # <- on passe le sha
+
+
+def update_app(download_url, expected_sha256: str | None):
     exe_path = os.path.abspath(getattr(sys, "executable", sys.argv[0]))
-    exe_dir = os.path.dirname(exe_path)
+    exe_dir  = os.path.dirname(exe_path)
 
-    # 1) Télécharger l’update vers un fichier temporaire
+    # 1) Téléchargement -> fichier temp
     with requests.get(download_url, stream=True, timeout=60) as r:
         r.raise_for_status()
         fd, tmp_path = tempfile.mkstemp(prefix="ludov-update-", suffix=".exe")
@@ -79,7 +79,7 @@ def update_app(download_url):
         with open(tmp_path, "wb") as f:
             shutil.copyfileobj(r.raw, f)
 
-    # 2) Vérifier le hash si fourni
+    # 2) Vérif d'intégrité
     if expected_sha256:
         got = _sha256(tmp_path)
         if got.lower() != expected_sha256.lower():
@@ -88,14 +88,14 @@ def update_app(download_url):
             print("❌ Hash invalide — mise à jour annulée.")
             return
 
-    # 3) Générer un mini updater PowerShell qui fait le swap à froid (moins “suspect” pour les AV)
+    # 3) Génère un updater PowerShell qui SANS -ArgumentList si vide
     ps_code = r"""
 param(
   [string]$OldPath,
   [string]$TmpPath,
   [string]$Args
 )
-# Attendre la libération du fichier
+
 $retries = 50
 while ($retries -gt 0) {
   try {
@@ -107,19 +107,24 @@ while ($retries -gt 0) {
     $retries -= 1
   }
 }
-# Sauvegarde ancienne version et swap
+
 if (Test-Path ($OldPath + ".bak")) { Remove-Item ($OldPath + ".bak") -Force -ErrorAction SilentlyContinue }
 Move-Item -LiteralPath $OldPath -Destination ($OldPath + ".bak") -Force
 Move-Item -LiteralPath $TmpPath -Destination $OldPath -Force
-# Relancer l’app
-Start-Process -FilePath $OldPath -ArgumentList $Args
+
+$psi = @{ FilePath = $OldPath }
+if (-not [string]::IsNullOrWhiteSpace($Args)) {
+  $psi["ArgumentList"] = $Args
+}
+Start-Process @psi
 """
     scripts_dir = tempfile.mkdtemp(prefix="ludov-updater-")
     ps_path = os.path.join(scripts_dir, "updater.ps1")
     with open(ps_path, "w", encoding="utf-8") as f:
         f.write(textwrap.dedent(ps_code).strip())
 
-    args = " ".join(map(lambda a: f'"{a}"', sys.argv[1:]))
+    # arguments à relayer (peut être vide)
+    args = " ".join(f'"{a}"' for a in sys.argv[1:]) if len(sys.argv) > 1 else ""
 
     try:
         subprocess.Popen([

@@ -201,7 +201,8 @@ def create_connection() -> mysql.connector.MySQLConnection:
             user=CONFIG["DB_USER"],
             password=CONFIG["DB_PASSWORD"],
             database=dbname,
-            auth_plugin='mysql_native_password'
+            auth_plugin='mysql_native_password',
+            use_pure=True
         )
         if conn.is_connected():
             return conn
