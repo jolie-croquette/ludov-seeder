@@ -174,7 +174,6 @@ def fetch_biblios_page(page: int):
     )
     resp.raise_for_status()
     return resp.json()
-
 def seed_games_from_koha(conn):
     print("\n=== SEED JEUX KOHA: démarrage ===")
     to_upsert = []
