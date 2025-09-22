@@ -2,11 +2,9 @@ import json
 import mysql.connector
 from mysql.connector import Error
 from typing import Any, Dict
-from typing import Optional
 
 FILE_PATH = "config.json"
 REQUIRED_KEYS = ["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"]
-OPTIONAL_KEYS = ["AUTH_PLUGIN", "SSL_CA", "SSL_CERT", "SSL_KEY"]
 SQL_SCHEMA = r"""
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS=0;
@@ -193,51 +191,21 @@ def get_config(path: str = FILE_PATH) -> Dict[str, Any]:
 
 CONFIG = get_config()
 
-def _connect_raw(database: Optional[str] = None) -> mysql.connector.MySQLConnection:
-    """Connexion basse-niveau, sans logique métier, avec support auth_plugin/SSL si fournis."""
-    kwargs = {
-        "host": CONFIG["DB_HOST"],
-        "port": CONFIG["DB_PORT"],
-        "user": CONFIG["DB_USER"],
-        "password": CONFIG["DB_PASSWORD"],
-        "autocommit": False,
-    }
-    if database:
-        kwargs["database"] = database
-    # auth plugin optionnel
-    auth_plugin = CONFIG.get("AUTH_PLUGIN")
-    if auth_plugin:
-        kwargs["auth_plugin"] = auth_plugin
-    # SSL optionnel (si l'hébergeur l'exige)
-    ssl_ca = CONFIG.get("SSL_CA")
-    if ssl_ca:
-        kwargs["ssl_ca"] = ssl_ca
-    ssl_cert = CONFIG.get("SSL_CERT")
-    if ssl_cert:
-        kwargs["ssl_cert"] = ssl_cert
-    ssl_key = CONFIG.get("SSL_KEY")
-    if ssl_key:
-        kwargs["ssl_key"] = ssl_key
-
-    conn = mysql.connector.connect(**kwargs)
-    if not conn.is_connected():
-        raise ConnectionError("❌ Failed to connect to the database.")
-    return conn
-
 def create_connection() -> mysql.connector.MySQLConnection:
-    """1) connexion serveur (sans DB) 2) ensure DB 3) reconnexion sur la DB."""
+    """Crée une connexion MySQL en utilisant les paramètres du fichier config.json."""
     try:
-        # 1) connexion sans base
-        server_conn = _connect_raw(database=None)
-        try:
-            ensure_database(server_conn)
-        finally:
-            try: server_conn.close()
-            except: pass
-
-        # 2) connexion sur la base
-        db_conn = _connect_raw(database=CONFIG["DB_NAME"])
-        return db_conn
+        conn = mysql.connector.connect(
+            host=CONFIG["DB_HOST"],
+            port=CONFIG["DB_PORT"],
+            user=CONFIG["DB_USER"],
+            password=CONFIG["DB_PASSWORD"],
+            database=CONFIG["DB_NAME"],
+            auth_plugin='mysql_native_password'
+        )
+        if conn.is_connected():
+            return conn
+        else:
+            raise ConnectionError("❌ Failed to connect to the database.")
     except Error as e:
         raise ConnectionError(f"Database connection error: {e}")
 
