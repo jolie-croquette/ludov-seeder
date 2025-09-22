@@ -247,5 +247,4 @@ def seed_reservations(conn):
     reservations = []
 
 if __name__ == "__main__":
-    check_for_update()
     main()
