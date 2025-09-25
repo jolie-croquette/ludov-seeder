@@ -98,6 +98,23 @@ CREATE TABLE IF NOT EXISTS `reservation_hold` (
   KEY `ix_hold_accessoir` (`accessoir_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS `otp` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `user_id` INT NOT NULL,
+  `otp_code` VARCHAR(6) NOT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `expires_at` DATETIME NOT NULL,
+  `is_used` BOOLEAN NOT NULL DEFAULT FALSE,
+  FOREIGN KEY (`user_id`) REFERENCES users(`id`)
+);
+
+CREATE TABLE IF NOT EXISTS `cours` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `name` VARCHAR(255) NOT NULL,
+  `number` VARCHAR(50) NOT NULL
+);
+  
+
 -- ============
 -- FOREIGN KEYS
 -- ============
