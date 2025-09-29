@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `firstname` VARCHAR(50) NOT NULL,
   `lastname` VARCHAR(100) NOT NULL,
   `email` VARCHAR(255) NOT NULL,
-  `password` VARCHAR(255) NOT NULL,
+  `password` VARCHAR(255),
   `isAdmin` TINYINT NOT NULL,
   `lastUpdatedAt` DATETIME NOT NULL,
   `createdAt` DATETIME NOT NULL,
@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS `consoles` (
   `id` INT AUTO_INCREMENT NOT NULL UNIQUE,
   `name` VARCHAR(255) NOT NULL UNIQUE,
   `nombre` INT NOT NULL,
+  `picture` LONGTEXT,
   `lastUpdatedAt` DATETIME NOT NULL,
   `createdAt` DATETIME NOT NULL,
   PRIMARY KEY (`id`)
@@ -69,7 +70,7 @@ CREATE TABLE IF NOT EXISTS `accessoires` (
   `id` INT AUTO_INCREMENT UNIQUE NOT NULL,
   `name` TEXT NOT NULL,
   `console_id` JSON NOT NULL,
-  `koha_id` INT NOT NULL UNIQUE,
+  `koha_id` INT NOT NULL,
   `lastUpdatedAt` DATETIME NOT NULL,
   `createdAt` DATETIME NOT NULL,
   PRIMARY KEY (`id`)
@@ -348,12 +349,12 @@ def insert_console(conn, consoles):
     print("=== SEED CONSOLES KOHA: terminé ===\n")
 
 def insert_accessoires(conn, accessoires): 
-    accessoiresTuples = [(d["name"], d["koha_id"], d["console"]) for d in accessoires]
+    accessoiresTuples = [(d["name"], d["console"], d["koha_id"]) for d in accessoires]
     sql = """
         INSERT INTO accessoires
             (name, console_id, koha_id, lastUpdatedAt, createdAt)
         VALUES
-            (%s, %s, %s, NOW(), NOW())
+            (%s, CAST(%s AS JSON), %s, NOW(), NOW())
     """
     try:
         cur = conn.cursor()

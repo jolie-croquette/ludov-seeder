@@ -33,39 +33,6 @@ print("""
 =========================================
 """)
 
-def check_for_update():
-    try:
-        resp = requests.get(LATEST_URL, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        latest_version = data["version"]
-        download_url = data["url"]
-
-        if latest_version != APP_VERSION:
-            print(f"🔄 Nouvelle version {latest_version} trouvée (actuelle {APP_VERSION})")
-            update_app(download_url)
-        else:
-            print("✅ Application à jour")
-    except Exception as e:
-        print(f"⚠ Impossible de vérifier les mises à jour : {e}")
-
-def update_app(download_url):
-    exe_path = sys.argv[0]
-    new_path = exe_path + ".new"
-
-    print("⬇ Téléchargement de la mise à jour...")
-    with requests.get(download_url, stream=True) as r:
-        r.raise_for_status()
-        with open(new_path, "wb") as f:
-            shutil.copyfileobj(r.raw, f)
-
-    print("🔄 Remplacement de l'exécutable...")
-    os.replace(new_path, exe_path)
-
-    print("🚀 Redémarrage...")
-    subprocess.Popen([exe_path] + sys.argv[1:])
-    sys.exit(0)
-
 def main():
     conn = db.create_connection()
     if conn is None:
@@ -83,12 +50,11 @@ def main():
         db.run_embedded_sql(conn)
         print("✅ Schéma importé avec succès.")
 
-        # fetch_all_biblios()
+        fetch_all_biblios()
 
-        # seed_games_from_koha(conn)
+        seed_games_from_koha(conn)
         fetch_console(conn)
         fetch_accessoires(conn)
-        seed_users(conn)
         seed_reservations(conn)
     finally:
         try:
@@ -267,10 +233,6 @@ def fetch_accessoires(conn):
         })
 
     db.insert_accessoires(conn, accessoires_data)
-
-
-def seed_users(conn):
-    user = []
 
 def seed_reservations(conn):
     reservations = []
