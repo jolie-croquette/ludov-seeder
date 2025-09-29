@@ -33,39 +33,6 @@ print("""
 =========================================
 """)
 
-def check_for_update():
-    try:
-        resp = requests.get(LATEST_URL, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        latest_version = data["version"]
-        download_url = data["url"]
-
-        if latest_version != APP_VERSION:
-            print(f"🔄 Nouvelle version {latest_version} trouvée (actuelle {APP_VERSION})")
-            update_app(download_url)
-        else:
-            print("✅ Application à jour")
-    except Exception as e:
-        print(f"⚠ Impossible de vérifier les mises à jour : {e}")
-
-def update_app(download_url):
-    exe_path = sys.argv[0]
-    new_path = exe_path + ".new"
-
-    print("⬇ Téléchargement de la mise à jour...")
-    with requests.get(download_url, stream=True) as r:
-        r.raise_for_status()
-        with open(new_path, "wb") as f:
-            shutil.copyfileobj(r.raw, f)
-
-    print("🔄 Remplacement de l'exécutable...")
-    os.replace(new_path, exe_path)
-
-    print("🚀 Redémarrage...")
-    subprocess.Popen([exe_path] + sys.argv[1:])
-    sys.exit(0)
-
 def main():
     conn = db.create_connection()
     if conn is None:
@@ -86,8 +53,8 @@ def main():
         fetch_all_biblios()
 
         seed_games_from_koha(conn)
-        seed_console_from_game(conn)
-        seed_users(conn)
+        fetch_console(conn)
+        fetch_accessoires(conn)
         seed_reservations(conn)
     finally:
         try:
@@ -215,27 +182,57 @@ def seed_games_from_koha(conn):
     
     db.insertGameIntoDatabase(conn, to_upsert)
 
-def seed_console_from_game(conn):
-    to_upsert = []
-
-    for b in ALL_BIBLIOS:
-        if b.get("item_type") != "JEU":
-            continue
-        
-        name = (b.get("edition_statement") or None)
+def fetch_console(conn):
+    print("\n=== SEED CONSOLES: démarrage ===")
+    url = "https://www.ludov.ca/koha/consoles/catalogue_source_consoles.json"
+    headers = {
+        "Accept": "application/json",
+    }
+    resp = requests.get(
+        url,
+        headers=headers,
+        timeout=60
+    )
+    resp.raise_for_status()
+    to_insert = []
+    for console in resp.json():
+        id = console.get("id")
+        name = console.get("console")
+        nbConsoles = console.get("consoledispo")
         if not name:
             continue
+        to_insert.append((id, name, nbConsoles))
+    db.insert_console(conn, resp.json())
 
-        to_upsert.append((name,))
+import json
 
-    if not to_upsert:
-        print("Aucune console à insérer.")
-        return
-    
-    db.insert_console(conn, to_upsert)
+def fetch_accessoires(conn): 
+    print("\n=== SEED ACCESSOIRES: démarrage ===")
+    url = "https://www.ludov.ca/koha/access/catalogue_source_access.json"
+    headers = {
+        "Accept": "application/json",
+    }
+    resp = requests.get(url, headers=headers, timeout=60)
+    resp.raise_for_status()
 
-def seed_users(conn):
-    user = []
+    accessoires_data = []
+    for accessoire in resp.json():
+        raw_console = accessoire.get("console")
+
+        if raw_console:
+            consoles = [
+                int(c.strip()) for c in raw_console.split(";") if c.strip().isdigit()
+            ]
+        else:
+            consoles = []
+
+        accessoires_data.append({
+            "koha_id": int(accessoire.get("id")),
+            "name": accessoire.get("accessoire"),
+            "console": json.dumps(consoles, ensure_ascii=False)
+        })
+
+    db.insert_accessoires(conn, accessoires_data)
 
 def seed_reservations(conn):
     reservations = []
