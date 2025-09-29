@@ -24,8 +24,7 @@ CREATE TABLE IF NOT EXISTS `users` (
 CREATE TABLE IF NOT EXISTS `consoles` (
   `id` INT AUTO_INCREMENT NOT NULL UNIQUE,
   `name` VARCHAR(255) NOT NULL UNIQUE,
-  `accessoires` JSON,
-  `available` TINYINT NOT NULL DEFAULT '1',
+  `nombre` INT NOT NULL,
   `lastUpdatedAt` DATETIME NOT NULL,
   `createdAt` DATETIME NOT NULL,
   PRIMARY KEY (`id`)
@@ -67,15 +66,13 @@ CREATE TABLE IF NOT EXISTS `reservations` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `accessoires` (
-  `id` INT AUTO_INCREMENT NOT NULL UNIQUE,
+  `id` INT AUTO_INCREMENT UNIQUE NOT NULL,
   `name` TEXT NOT NULL,
-  `description` LONGTEXT NOT NULL,
-  `console_id` INT NOT NULL,            -- corrigé: INT (avant VARCHAR)
-  `quantity` INT NOT NULL,
+  `console_id` JSON NOT NULL,
+  `koha_id` INT NOT NULL UNIQUE,
   `lastUpdatedAt` DATETIME NOT NULL,
   `createdAt` DATETIME NOT NULL,
-  PRIMARY KEY (`id`),
-  KEY `ix_accessoires_console` (`console_id`)
+  PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `reservation_hold` (
@@ -87,6 +84,8 @@ CREATE TABLE IF NOT EXISTS `reservation_hold` (
   `game3_id` INT NULL,                  -- corrigé: INT
   `station_id` INT NULL,
   `accessoir_id` INT NULL,              -- corrigé: INT
+  `expireAt` TIMESTAMP NOT NULL,
+  `date` DATETIME,
   `createdAt` DATETIME NOT NULL,
   PRIMARY KEY (`id`),
   KEY `ix_hold_user` (`user_id`),
@@ -125,15 +124,11 @@ ALTER TABLE `reservations`
   FOREIGN KEY (`etudiant_id`) REFERENCES `users`(`id`)
   ON UPDATE CASCADE ON DELETE RESTRICT;
 
--- (supprimé) reservations.games JSON -> games.id  ❌ impossible en FK
-
 -- reservations.console -> consoles.id  (corrigé casse: consoles)
 ALTER TABLE `reservations`
   ADD CONSTRAINT `reservations_fk3`
   FOREIGN KEY (`console`) REFERENCES `consoles`(`id`)
   ON UPDATE CASCADE ON DELETE RESTRICT;
-
--- (supprimé) Consoles.accessoires JSON -> accessoires.id  ❌ impossible en FK
 
 -- reservation_hold.user_id -> users.id
 ALTER TABLE `reservation_hold`
@@ -176,19 +171,6 @@ ALTER TABLE `reservation_hold`
   ADD CONSTRAINT `reservation_hold_fk7`
   FOREIGN KEY (`accessoir_id`) REFERENCES `accessoires`(`id`)
   ON UPDATE CASCADE ON DELETE SET NULL;
-
--- (supprimé) stations.consoles JSON -> consoles.id  ❌ impossible en FK
-
--- accessoires.console_id -> consoles.id  (corrigé casse: consoles)
-ALTER TABLE `accessoires`
-  ADD CONSTRAINT `accessoires_fk3`
-  FOREIGN KEY (`console_id`) REFERENCES `consoles`(`id`)
-  ON UPDATE CASCADE ON DELETE RESTRICT;
-
-CREATE VIEW CONSOLE_AVAILABLE AS
-    SELECT MIN(id) as id, name, available, createdAt, lastUpdatedAt
-    FROM consoles
-    GROUP BY name;
 
 CREATE VIEW `GAME_AVAILABLE` AS
     SELECT * FROM games GROUP BY titre;
@@ -344,17 +326,18 @@ def insertGameIntoDatabase(conn, games):
     print("=== SEED JEUX KOHA: terminé ===\n")
 
 def insert_console(conn, consoles):
+    consolesTuples = [(d["id"], d["console"], d["consoledispo"]) for d in consoles]
     sql = """
-        INSERT IGNORE INTO consoles
-            (name, accessoires, available, lastUpdatedAt, createdAt)
+        INSERT INTO consoles
+            (id, name, nombre, lastUpdatedAt, createdAt)
         VALUES
-            (%s, NULL, 1, NOW(), NOW())
+            (%s, %s, %s, NOW(), NOW())
     """
     try:
         cur = conn.cursor()
-        cur.executemany(sql, consoles)
+        cur.executemany(sql, consolesTuples)
         conn.commit()
-        print(f"✅ Upsert effectué : {cur.rowcount} lignes (insert+update).")
+        print(f"✅ Upsert effectué : {cur.rowcount} lignes (insert).")
     except mysql.connector.Error as err:
         print(f"Erreur MySQL pendant l’upsert : {err}")
     finally:
@@ -362,7 +345,29 @@ def insert_console(conn, consoles):
             cur.close()
         except Exception:
             pass
-    print("=== SEED JEUX KOHA: terminé ===\n")
+    print("=== SEED CONSOLES KOHA: terminé ===\n")
+
+def insert_accessoires(conn, accessoires): 
+    accessoiresTuples = [(d["name"], d["koha_id"], d["console"]) for d in accessoires]
+    sql = """
+        INSERT INTO accessoires
+            (name, console_id, koha_id, lastUpdatedAt, createdAt)
+        VALUES
+            (%s, %s, %s, NOW(), NOW())
+    """
+    try:
+        cur = conn.cursor()
+        cur.executemany(sql, accessoiresTuples)
+        conn.commit()
+        print(f"✅ Upsert effectué : {cur.rowcount} lignes (insert).")
+    except mysql.connector.Error as err:
+        print(f"Erreur MySQL pendant l’upsert : {err}")
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+    print("=== SEED ACCESSOIRES KOHA: terminé ===\n")
 
 def print_sql_error(prefix, e: Error):
     err_no = getattr(e, "errno", None)
