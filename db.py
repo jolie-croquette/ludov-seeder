@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS `games` (
   `picture` LONGTEXT,
   `available` TINYINT NOT NULL DEFAULT '1',
   `createdAt` DATETIME NOT NULL,
-  `lastUpdatedAt` DATETIME NOT NULL,
+  `lastUpdatedAt` DATETIME DEFAULT NOW(),
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
