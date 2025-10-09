@@ -35,11 +35,14 @@ CREATE TABLE IF NOT EXISTS `games` (
   `id` INT AUTO_INCREMENT NOT NULL UNIQUE,
   `titre` TEXT NOT NULL,
   `author` TEXT DEFAULT NULL,
+  `platform` VARCHAR(255) DEFAULT NULL,
+  `platform_id` INT NULL,
   `biblio_id` INT NOT NULL,
-  `picture` LONGTEXT NOT NULL,
+  `console_koha_id` INT DEFAULT NULL,
+  `picture` LONGTEXT,
   `available` TINYINT NOT NULL DEFAULT '1',
   `createdAt` DATETIME NOT NULL,
-  `lastUpdatedAt` DATETIME NOT NULL,
+  `lastUpdatedAt` DATETIME DEFAULT NOW(),
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -77,7 +80,7 @@ CREATE TABLE IF NOT EXISTS `accessoires` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `reservation_hold` (
-  `id` INT AUTO_INCREMENT NOT NULL UNIQUE,
+  `id` VARCHAR(255) NOT NULL UNIQUE,
   `user_id` INT NOT NULL,               -- corrigé: INT
   `console_id` INT NOT NULL,            -- corrigé: INT
   `game1_id` INT NULL,                  -- corrigé: INT
@@ -305,26 +308,27 @@ def run_embedded_sql(conn):
     finally:
         cur.close()
 
-def insertGameIntoDatabase(conn, games):
-    sql = """
-        INSERT INTO games
-            (id, titre, biblio_id, author, picture, available, lastUpdatedAt, createdAt)
-        VALUES
-            (%s, %s, %s, %s, %s, %s, %s, NOW())
+def insertGameIntoDatabase(conn, games_data):
+    cursor = conn.cursor()
+    
+    query = """
+        INSERT INTO games 
+        (id, titre, biblio_id, author, platform, platform_id, console_koha_id, available, createdAt)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            titre = VALUES(titre),
+            author = VALUES(author),
+            platform = VALUES(platform),
+            platform_id = VALUES(platform_id),
+            console_koha_id = VALUES(console_koha_id),
+            available = VALUES(available),
+            lastUpdatedAt = NOW()
     """
-    try:
-        cur = conn.cursor()
-        cur.executemany(sql, games)
-        conn.commit()
-        print(f"✅ Upsert effectué : {cur.rowcount} lignes (insert+update).")
-    except mysql.connector.Error as err:
-        print(f"Erreur MySQL pendant l’upsert : {err}")
-    finally:
-        try:
-            cur.close()
-        except Exception:
-            pass
-    print("=== SEED JEUX KOHA: terminé ===\n")
+    
+    cursor.executemany(query, games_data)
+    conn.commit()
+    print(f">>> {cursor.rowcount} jeux insérés/mis à jour")
+    cursor.close()
 
 def insert_console(conn, consoles):
     consolesTuples = [(d["id"], d["console"], d["consoledispo"]) for d in consoles]
