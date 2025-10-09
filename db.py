@@ -34,8 +34,8 @@ CREATE TABLE IF NOT EXISTS `consoles` (
 CREATE TABLE IF NOT EXISTS `games` (
   `id` INT AUTO_INCREMENT NOT NULL UNIQUE,
   `titre` TEXT NOT NULL,
-  `author` TEXT NOT NULL,
-  `platform` VARCHAR(50) DEFAULT NULL,
+  `author` TEXT DEFAULT NULL,
+  `platform` VARCHAR(255) DEFAULT NULL,
   `platform_id` INT NULL,
   `biblio_id` INT NOT NULL,
   `console_koha_id` INT DEFAULT NULL,
