@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS `consoles` (
 CREATE TABLE IF NOT EXISTS `games` (
   `id` INT AUTO_INCREMENT NOT NULL UNIQUE,
   `titre` TEXT NOT NULL,
-  `author` TEXT NOT NULL,
+  `author` TEXT DEFAULT NULL,
   `biblio_id` INT NOT NULL,
   `picture` LONGTEXT NOT NULL,
   `available` TINYINT NOT NULL DEFAULT '1',
