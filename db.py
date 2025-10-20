@@ -87,9 +87,11 @@ CREATE TABLE IF NOT EXISTS `reservation_hold` (
   `game2_id` INT NULL,                  -- corrigé: INT
   `game3_id` INT NULL,                  -- corrigé: INT
   `station_id` INT NULL,
-  `accessoir_id` INT NULL,              -- corrigé: INT
+  `accessoir_id` INT NULL,
+  `cours` INT NULL,
+  `date` DATE NULL,
+  `time` TIME NULL,
   `expireAt` TIMESTAMP NOT NULL,
-  `date` DATETIME,
   `createdAt` DATETIME NOT NULL,
   PRIMARY KEY (`id`),
   KEY `ix_hold_user` (`user_id`),
@@ -113,8 +115,8 @@ CREATE TABLE IF NOT EXISTS `otp` (
 
 CREATE TABLE IF NOT EXISTS `cours` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
-  `name` VARCHAR(255) NOT NULL,
-  `number` VARCHAR(50) NOT NULL
+  `code_cours` VARCHAR(7) NOT NULL,
+  `nom_cours` VARCHAR(255) NOT NULL
 );
   
 
