@@ -137,10 +137,11 @@ CREATE TABLE IF NOT EXISTS `cours` (
 
 CREATE TABLE `weekly_availabilities` (
     `weekly_id` INT AUTO_INCREMENT PRIMARY KEY,
-    `start_date` DATE NOT NULL,
-    `end_date` DATE NOT NULL,
+    `start_date` DATE NULL,
+    `end_date` DATE NULL,
     `day_of_week` VARCHAR(10) NOT NULL,
-    `enabled` BOOLEAN NOT NULL
+    `enabled` BOOLEAN NOT NULL,
+    `always_available` TINYINT(1) NOT NULL DEFAULT 0
 );
 
 CREATE TABLE `specific_dates` (
