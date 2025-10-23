@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS `console_stock` (
   `name` VARCHAR(255) NOT NULL,
   `picture` LONGTEXT,
   `is_active` TINYINT NOT NULL DEFAULT 1,
+  `holding` TINYINT NOT NULL DEFAULT 0,
   `createdAt` DATETIME NOT NULL DEFAULT NOW(),
   `lastUpdatedAt` DATETIME NOT NULL DEFAULT NOW() ON UPDATE NOW(),
     PRIMARY KEY (`id`),
@@ -55,6 +56,7 @@ CREATE TABLE IF NOT EXISTS `games` (
   `biblio_id` INT NOT NULL,
   `console_koha_id` INT DEFAULT NULL,
   `picture` LONGTEXT,
+  `holding` TINYINT NOT NULL DEFAULT 0,
   `createdAt` DATETIME NOT NULL,
   `lastUpdatedAt` DATETIME DEFAULT NOW(),
   PRIMARY KEY (`id`)
@@ -219,9 +221,9 @@ ALTER TABLE `reservation_hold`
   FOREIGN KEY (`accessoir_id`) REFERENCES `accessoires`(`id`)
   ON UPDATE CASCADE ON DELETE SET NULL;
 
-ALTER TABLE games
+ALTER TABLE `games`
   ADD CONSTRAINT `games_fk_console_type`
-  FOREIGN KEY (`console_type_id`) REFERENCES console_type(`id`)
+  FOREIGN KEY (`console_type_id`) REFERENCES `console_type`(`id`)
   ON UPDATE CASCADE ON DELETE SET NULL;
 
 ALTER TABLE games
@@ -245,7 +247,7 @@ SELECT
     ct.picture,
     ct.description,
     COUNT(cs.id) as total_units,
-    SUM(CASE WHEN cs.is_active = 1 THEN 1 ELSE 0 END) as active_units,
+    SUM(CASE WHEN cs.is_active = 1 AND cs.holding = 0 THEN 1 ELSE 0 END) as active_units,
     SUM(CASE WHEN cs.is_active = 0 THEN 1 ELSE 0 END) as inactive_units
 FROM console_type ct
 LEFT JOIN console_stock cs ON ct.id = cs.console_type_id

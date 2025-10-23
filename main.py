@@ -313,8 +313,8 @@ def main():
             platform_mapping = load_ludov_platform_mapping()
             
             fetch_all_biblios()
-            seed_games_from_koha_without_covers(conn, platform_mapping)
             fetch_console(conn)
+            seed_games_from_koha_without_covers(conn, platform_mapping)
             fetch_accessoires(conn)
             seed_reservations(conn)
             
