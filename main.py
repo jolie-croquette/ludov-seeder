@@ -22,7 +22,7 @@ ENDPOINT = "/biblios"
 USERNAME = CONFIG["API_USERNAME"]
 PASSWORD = CONFIG["API_PASSWORD"]
 
-PER_PAGE = 10000
+PER_PAGE = 999999
 CHECK_DATE = False
 
 ALL_BIBLIOS = []
@@ -313,8 +313,8 @@ def main():
             platform_mapping = load_ludov_platform_mapping()
             
             fetch_all_biblios()
-            seed_games_from_koha_without_covers(conn, platform_mapping)
             fetch_console(conn)
+            seed_games_from_koha_without_covers(conn, platform_mapping)
             fetch_accessoires(conn)
             seed_reservations(conn)
             
@@ -435,8 +435,10 @@ def seed_games_from_koha_without_covers(conn, platform_mapping):
     """Seed initial depuis Koha SANS fetch IGDB mais AVEC infos plateforme"""
     print("\n=== SEED JEUX KOHA (avec plateformes, sans covers): demarrage ===")
     
+    type_map = db.get_console_type_id_map(conn)
+
     to_upsert = []
-    stats = {"total": 0, "with_platform": 0, "without_platform": 0}
+    stats = {"total": 0, "with_platform": 0, "without_platform": 0, "with_type": 0}
 
     for b in ALL_BIBLIOS:
         if b.get("item_type") != "JEU":
@@ -458,16 +460,17 @@ def seed_games_from_koha_without_covers(conn, platform_mapping):
         title = (b.get("title") or "").strip()
         subtitle = (b.get("subtitle") or "").strip()
         titre = f"{title} - {subtitle}" if subtitle else title
+        if not titre: 
+            continue
 
         author = (b.get("author") or None)
         available = 1
 
-        # Placeholder par défaut
-        
         # Récupérer les infos de plateforme depuis le mapping Ludov
         platform_name = None
         platform_id = None
         console_koha_id = None
+        console_type_id = None
         
         platform_info = platform_mapping.get(str(biblio_id))
         if platform_info:
@@ -475,31 +478,42 @@ def seed_games_from_koha_without_covers(conn, platform_mapping):
             platform_name = platform_info.get("console")
             platform_id = platform_info.get("igdb_id")
             console_koha_id = platform_info.get("koha_console_id")
+            key = (platform_name or "").strip().lower()
+            console_type_id = type_map.get(key)
+            if console_type_id:
+                stats["with_type"] += 1
         else:
             stats["without_platform"] += 1
 
         to_upsert.append((
-            gid, titre, gid, author, 
-            platform_name, platform_id, console_koha_id, available,
-            ts_local.strftime("%Y-%m-%d %H:%M:%S"),
+            gid,                    # biblio_id
+            titre,                  # titre
+            author,                 # author
+            platform_name,          # platform
+            int(platform_id) if platform_id is not None else None,       # platform_id
+            int(console_koha_id) if console_koha_id is not None else None, # console_koha_id
+            int(console_type_id) if console_type_id is not None else None, # console_type_id
+            ts_local.strftime("%Y-%m-%d %H:%M:%S"),                       # createdAt
         ))
+
         stats["total"] += 1
         
         # Affichage progression simple
         if stats["total"] % 100 == 0:
-            print(f"... {stats['total']} jeux traites ({stats['with_platform']} avec plateforme)")
-
+            print(f"... {stats['total']} jeux traités "
+                  f"({stats['with_platform']} avec plateforme, {stats['with_type']} avec type)")
     if not to_upsert:
         print("Aucun jeu a inserer.")
-        return
+        return 
     
     # Stats finales
     print(f"\n{'='*60}")
     print("STATISTIQUES SEED KOHA")
     print(f"{'='*60}")
-    print(f"Total jeux importes: {stats['total']}")
-    print(f"Jeux avec plateforme: {stats['with_platform']}")
-    print(f"Jeux sans plateforme: {stats['without_platform']}")
+    print(f"Total jeux importés       : {stats['total']}")
+    print(f"Jeux avec plateforme      : {stats['with_platform']}")
+    print(f"Jeux mappés à un type     : {stats['with_type']}")
+    print(f"Jeux sans plateforme      : {stats['without_platform']}")
     
     db.insertGameIntoDatabase(conn, to_upsert)
 
@@ -621,11 +635,45 @@ def update_game_covers(conn, platform_mapping, fetch_all=False):
 
 def fetch_console(conn):
     print("\n=== SEED CONSOLES: demarrage ===")
-    url = "https://www.ludov.ca/koha/consoles/catalogue_source_consoles.json"
-    headers = {"Accept": "application/json"}
-    resp = requests.get(url, headers=headers, timeout=60)
+    url = f"{BASE_URL}{ENDPOINT}"
+    headers = {
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip",
+        "User-Agent": "LUDOVSeeder/2.0",
+    }
+    params = {"_per_page": PER_PAGE, "q" : json.dumps({"item_type": "CONSOLE"})}
+    resp = requests.get(
+        url,
+        auth=HTTPBasicAuth(USERNAME, PASSWORD),
+        headers=headers,
+        params=params,
+        timeout=60
+    )
     resp.raise_for_status()
-    db.insert_console(conn, resp.json())
+
+    consoles = resp.json()
+
+    db.insert_console(conn, consoles)
+    return consoles
+    
+
+def seed_console_types(conn, consoles):
+    print("\n=== SEED TYPES DE CONSOLES: demarrage ===")
+
+    # Extraire les noms de consoles et éliminer les doublons
+    console_names = []
+    seen_names = set()
+    
+    for console in consoles:
+        name = console.get("title") or console.get("name", "")
+        if name and name not in seen_names:
+            console_names.append(name)  # Ajouter directement le nom (string)
+            seen_names.add(name)
+    
+    print(f">>> {len(console_names)} types de consoles uniques trouvés")
+    
+    if console_names:
+        db.insert_console_types(conn, console_names)
 
 def fetch_accessoires(conn): 
     print("\n=== SEED ACCESSOIRES: demarrage ===")
