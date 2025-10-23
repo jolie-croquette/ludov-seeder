@@ -1,7 +1,7 @@
 {
-  "version": "1.13",
-  "tag": "v1.13",
-  "url": "https://github.com/jolie-croquette/ludov-seeder/releases/download/v1.13/LUDOVSeeder.exe",
-  "sha256": "06870e841311b3004a4e2968b481f3ec3b44f1e4bbbfad180d0a8e9d0135a9a2",
-  "notes": "Release v1.13"
+  "version": "1.15",
+  "tag": "v1.15",
+  "url": "https://github.com/jolie-croquette/ludov-seeder/releases/download/v1.15/LUDOVSeeder.exe",
+  "sha256": "b4b3e6d81f37d698db7e92efa34cb60b8185e537e31dcad7a78c4a109bf59c4a",
+  "notes": "Release v1.15"
 }
