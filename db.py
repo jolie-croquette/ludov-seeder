@@ -21,14 +21,28 @@ CREATE TABLE IF NOT EXISTS `users` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS `consoles` (
+CREATE TABLE IF NOT EXISTS `console_type` ( 
+    `id` INT AUTO_INCREMENT NOT NULL UNIQUE,
+    `name` VARCHAR(255) NOT NULL UNIQUE,
+    `picture` LONGTEXT,
+    `description` TEXT,
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `console_stock` (
   `id` INT AUTO_INCREMENT NOT NULL UNIQUE,
-  `name` VARCHAR(255) NOT NULL UNIQUE,
-  `nombre` INT NOT NULL,
+  `console_type_id` INT NOT NULL,
+  `biblio_id` INT NOT NULL,
+  `name` VARCHAR(255) NOT NULL,
   `picture` LONGTEXT,
-  `lastUpdatedAt` DATETIME NOT NULL,
-  `createdAt` DATETIME NOT NULL,
-  PRIMARY KEY (`id`)
+  `is_active` TINYINT NOT NULL DEFAULT 1,
+  `createdAt` DATETIME NOT NULL DEFAULT NOW(),
+  `lastUpdatedAt` DATETIME NOT NULL DEFAULT NOW() ON UPDATE NOW(),
+    PRIMARY KEY (`id`),
+    FOREIGN KEY (`console_type_id`) REFERENCES `console_type`(`id`) 
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    INDEX `idx_console_type` (`console_type_id`),
+    INDEX `idx_active` (`is_active`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `games` (
@@ -36,11 +50,11 @@ CREATE TABLE IF NOT EXISTS `games` (
   `titre` TEXT NOT NULL,
   `author` TEXT DEFAULT NULL,
   `platform` VARCHAR(255) DEFAULT NULL,
+  `console_type_id` INT NULL,
   `platform_id` INT NULL,
   `biblio_id` INT NOT NULL,
   `console_koha_id` INT DEFAULT NULL,
   `picture` LONGTEXT,
-  `available` TINYINT NOT NULL DEFAULT '1',
   `createdAt` DATETIME NOT NULL,
   `lastUpdatedAt` DATETIME DEFAULT NOW(),
   PRIMARY KEY (`id`)
@@ -48,7 +62,7 @@ CREATE TABLE IF NOT EXISTS `games` (
 
 CREATE TABLE IF NOT EXISTS `stations` (
   `id` INT AUTO_INCREMENT NOT NULL UNIQUE,
-  `consoles` JSON NOT NULL,             -- laissé en JSON (pas de FK)
+  `consoles` JSON NOT NULL,
   `lastUpdatedAt` DATETIME NOT NULL,
   `createdAt` DATETIME NOT NULL,
   PRIMARY KEY (`id`)
@@ -56,8 +70,8 @@ CREATE TABLE IF NOT EXISTS `stations` (
 
 CREATE TABLE IF NOT EXISTS `reservations` (
   `id` INT AUTO_INCREMENT NOT NULL UNIQUE,
-  `etudiant_id` INT NOT NULL,           -- corrigé: INT (avant VARCHAR)
-  `games` JSON NOT NULL,                -- JSON (pas de FK)
+  `etudiant_id` INT NOT NULL,
+  `games` JSON NOT NULL,
   `console` INT NOT NULL,
   `station` INT NOT NULL,
   `date` DATETIME NOT NULL,
@@ -81,11 +95,11 @@ CREATE TABLE IF NOT EXISTS `accessoires` (
 
 CREATE TABLE IF NOT EXISTS `reservation_hold` (
   `id` VARCHAR(255) NOT NULL UNIQUE,
-  `user_id` INT NOT NULL,               -- corrigé: INT
-  `console_id` INT NOT NULL,            -- corrigé: INT
-  `game1_id` INT NULL,                  -- corrigé: INT
-  `game2_id` INT NULL,                  -- corrigé: INT
-  `game3_id` INT NULL,                  -- corrigé: INT
+  `user_id` INT NOT NULL,
+  `console_id` INT NOT NULL,
+  `game1_id` INT NULL,
+  `game2_id` INT NULL,
+  `game3_id` INT NULL,
   `station_id` INT NULL,
   `accessoir_id` INT NULL,
   `cours` INT NULL,
@@ -157,10 +171,10 @@ ALTER TABLE `reservations`
   FOREIGN KEY (`etudiant_id`) REFERENCES `users`(`id`)
   ON UPDATE CASCADE ON DELETE RESTRICT;
 
--- reservations.console -> consoles.id  (corrigé casse: consoles)
+-- reservations.console -> console_stock.id (CORRIGÉ)
 ALTER TABLE `reservations`
   ADD CONSTRAINT `reservations_fk3`
-  FOREIGN KEY (`console`) REFERENCES `consoles`(`id`)
+  FOREIGN KEY (`console`) REFERENCES `console_stock`(`id`)
   ON UPDATE CASCADE ON DELETE RESTRICT;
 
 -- reservation_hold.user_id -> users.id
@@ -169,10 +183,10 @@ ALTER TABLE `reservation_hold`
   FOREIGN KEY (`user_id`) REFERENCES `users`(`id`)
   ON UPDATE CASCADE ON DELETE RESTRICT;
 
--- reservation_hold.console_id -> consoles.id  (corrigé casse: consoles)
+-- reservation_hold.console_id -> console_stock.id (CORRIGÉ)
 ALTER TABLE `reservation_hold`
   ADD CONSTRAINT `reservation_hold_fk2`
-  FOREIGN KEY (`console_id`) REFERENCES `consoles`(`id`)
+  FOREIGN KEY (`console_id`) REFERENCES `console_stock`(`id`)
   ON UPDATE CASCADE ON DELETE RESTRICT;
 
 -- reservation_hold.game1_id -> games.id
@@ -205,8 +219,38 @@ ALTER TABLE `reservation_hold`
   FOREIGN KEY (`accessoir_id`) REFERENCES `accessoires`(`id`)
   ON UPDATE CASCADE ON DELETE SET NULL;
 
+ALTER TABLE games
+  ADD CONSTRAINT `games_fk_console_type`
+  FOREIGN KEY (`console_type_id`) REFERENCES console_type(`id`)
+  ON UPDATE CASCADE ON DELETE SET NULL;
+
+ALTER TABLE games
+  ADD UNIQUE KEY uq_games_biblio (biblio_id),
+  ADD INDEX ix_games_console_type (console_type_id);
+
+CREATE INDEX ix_stock_biblio ON console_stock(biblio_id);
+
+-- ============
+-- VIEWS
+-- ============
+
 CREATE VIEW `GAME_AVAILABLE` AS
     SELECT * FROM games GROUP BY titre;
+
+-- Vue pour afficher les consoles disponibles par type
+CREATE OR REPLACE VIEW `console_catalog` AS
+SELECT 
+    ct.id as console_type_id,
+    ct.name,
+    ct.picture,
+    ct.description,
+    COUNT(cs.id) as total_units,
+    SUM(CASE WHEN cs.is_active = 1 THEN 1 ELSE 0 END) as active_units,
+    SUM(CASE WHEN cs.is_active = 0 THEN 1 ELSE 0 END) as inactive_units
+FROM console_type ct
+LEFT JOIN console_stock cs ON ct.id = cs.console_type_id
+GROUP BY ct.id, ct.name, ct.picture, ct.description
+ORDER BY ct.name;
 
 SET FOREIGN_KEY_CHECKS=1;
 """
@@ -338,47 +382,123 @@ def run_embedded_sql(conn):
         cur.close()
 
 def insertGameIntoDatabase(conn, games_data):
-    cursor = conn.cursor()
-    
-    query = """
-        INSERT INTO games 
-        (id, titre, biblio_id, author, platform, platform_id, console_koha_id, available, createdAt)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE
-            titre = VALUES(titre),
-            author = VALUES(author),
-            platform = VALUES(platform),
-            platform_id = VALUES(platform_id),
-            console_koha_id = VALUES(console_koha_id),
-            available = VALUES(available),
-            lastUpdatedAt = NOW()
     """
-    
-    cursor.executemany(query, games_data)
+    games_data attend des tuples de 8 valeurs:
+    (biblio_id, titre, author, platform, platform_id, console_koha_id, console_type_id, createdAt)
+    """
+    sql = """
+    INSERT INTO games
+        (biblio_id, titre, author, platform, platform_id, console_koha_id, console_type_id, createdAt)
+    VALUES
+        (%s, %s, %s, %s, %s, %s, %s, %s)
+    ON DUPLICATE KEY UPDATE
+        titre = VALUES(titre),
+        author = VALUES(author),
+        platform = VALUES(platform),
+        platform_id = VALUES(platform_id),
+        console_koha_id = VALUES(console_koha_id),
+        console_type_id = VALUES(console_type_id),
+        lastUpdatedAt = NOW()
+    """
+    with conn.cursor() as cur:
+        cur.executemany(sql, games_data)
     conn.commit()
-    print(f">>> {cursor.rowcount} jeux insérés/mis à jour")
-    cursor.close()
+    print(f">>> {len(games_data)} jeux insérés/mis à jour")
+
 
 def insert_console(conn, consoles):
-    consolesTuples = [(d["id"], d["console"], d["consoledispo"]) for d in consoles]
-    sql = """
-        INSERT INTO consoles
-            (id, name, nombre, lastUpdatedAt, createdAt)
-        VALUES
-            (%s, %s, %s, NOW(), NOW())
     """
+    Insère les consoles depuis Koha en créant automatiquement les console_type
+    et les console_stock associés
+    """
+    if not consoles:
+        print("⚠️ Aucune console à insérer")
+        return
+    
+    cursor = conn.cursor(dictionary=True)
+    
     try:
-        cur = conn.cursor()
-        cur.executemany(sql, consolesTuples)
+        stats = {
+            "types_created": 0,
+            "types_existing": 0,
+            "stocks_inserted": 0,
+            "stocks_updated": 0,
+            "errors": 0
+        }
+        
+        for console in consoles:
+            biblio_id = console.get("biblio_id")
+            name = console.get("title", "").strip()
+            timestamp = console.get("timestamp")
+            
+            if not biblio_id or not name:
+                stats["errors"] += 1
+                continue
+            
+            try:
+                # 1. Vérifier si le console_type existe
+                cursor.execute(
+                    "SELECT id FROM console_type WHERE name = %s",
+                    (name,)
+                )
+                result = cursor.fetchone()
+                
+                if result:
+                    console_type_id = result['id']
+                    stats["types_existing"] += 1
+                else:
+                    # 2. Créer le console_type s'il n'existe pas
+                    cursor.execute("""
+                        INSERT INTO console_type (name)
+                        VALUES (%s)
+                    """, (name,))
+                    console_type_id = cursor.lastrowid
+                    stats["types_created"] += 1
+                    print(f"   ✓ Nouveau type créé: {name} (ID: {console_type_id})")
+                
+                # 3. Insérer ou mettre à jour le console_stock (CORRIGÉ)
+                cursor.execute("""
+                    INSERT INTO console_stock
+                        (id, console_type_id, biblio_id, name, is_active, createdAt, lastUpdatedAt)
+                    VALUES
+                        (%s, %s, %s, %s, 1, NOW(), %s)
+                    ON DUPLICATE KEY UPDATE
+                        console_type_id = VALUES(console_type_id),
+                        biblio_id = VALUES(biblio_id),
+                        name = VALUES(name),
+                        lastUpdatedAt = VALUES(lastUpdatedAt)
+                """, (biblio_id, console_type_id, biblio_id, name, timestamp))
+                
+                if cursor.rowcount == 1:
+                    stats["stocks_inserted"] += 1
+                else:
+                    stats["stocks_updated"] += 1
+                
+            except mysql.connector.Error as err:
+                print(f"   ❌ Erreur pour console {biblio_id} ({name}): {err}")
+                stats["errors"] += 1
+                continue
+        
         conn.commit()
-        print(f"✅ Upsert effectué : {cur.rowcount} lignes (insert).")
+        
+        # Affichage des statistiques
+        print(f"\n{'='*60}")
+        print("STATISTIQUES SEED CONSOLES")
+        print(f"{'='*60}")
+        print(f"Types de consoles créés: {stats['types_created']}")
+        print(f"Types de consoles existants: {stats['types_existing']}")
+        print(f"Exemplaires insérés: {stats['stocks_inserted']}")
+        print(f"Exemplaires mis à jour: {stats['stocks_updated']}")
+        if stats['errors'] > 0:
+            print(f"⚠️ Erreurs: {stats['errors']}")
+        print(f"{'='*60}\n")
+        
     except mysql.connector.Error as err:
-        print(f"Erreur MySQL pendant l’upsert : {err}")
+        print(f"❌ Erreur globale MySQL: {err}")
+        conn.rollback()
     finally:
-        try:
-            cur.close()
-        except Exception:
-            pass
+        cursor.close()
+    
     print("=== SEED CONSOLES KOHA: terminé ===\n")
 
 def insert_accessoires(conn, accessoires): 
@@ -395,7 +515,7 @@ def insert_accessoires(conn, accessoires):
         conn.commit()
         print(f"✅ Upsert effectué : {cur.rowcount} lignes (insert).")
     except mysql.connector.Error as err:
-        print(f"Erreur MySQL pendant l’upsert : {err}")
+        print(f"Erreur MySQL pendant l'upsert : {err}")
     finally:
         try:
             cur.close()
@@ -403,8 +523,25 @@ def insert_accessoires(conn, accessoires):
             pass
     print("=== SEED ACCESSOIRES KOHA: terminé ===\n")
 
+def insert_console_types(conn, console_types):
+    """
+    OBSOLÈTE - Cette fonction n'est plus nécessaire car insert_console
+    crée automatiquement les console_type
+    """
+    print("\n⚠️ insert_console_types() est obsolète avec la nouvelle architecture")
+    print("Les types de consoles sont créés automatiquement par insert_console()")
+
 def print_sql_error(prefix, e: Error):
     err_no = getattr(e, "errno", None)
     sqlstate = getattr(e, "sqlstate", None)
     msg = getattr(e, "msg", str(e))
     print(f"{prefix} : [{err_no}/{sqlstate}] {msg}")
+
+def get_console_type_id_map(conn):
+    """Retourne un dict {name_lower: id} pour console_type."""
+    m = {}
+    with conn.cursor(dictionary=True) as cur:
+        cur.execute("SELECT id, name FROM console_type")
+        for row in cur.fetchall():
+            m[row["name"].strip().lower()] = row["id"]
+    return m
