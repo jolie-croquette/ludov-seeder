@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS `reservations` (
 CREATE TABLE IF NOT EXISTS `accessoires` (
   `id` INT AUTO_INCREMENT UNIQUE NOT NULL,
   `name` TEXT NOT NULL,
-  `console_id` JSON NOT NULL,
+  `consoles` JSON NOT NULL,
   `koha_id` INT NOT NULL,
   `lastUpdatedAt` DATETIME NOT NULL,
   `createdAt` DATETIME NOT NULL,
@@ -99,11 +99,12 @@ CREATE TABLE IF NOT EXISTS `reservation_hold` (
   `id` VARCHAR(255) NOT NULL UNIQUE,
   `user_id` INT NOT NULL,
   `console_id` INT NOT NULL,
+  `console_type_id` INT NULL,
   `game1_id` INT NULL,
   `game2_id` INT NULL,
   `game3_id` INT NULL,
   `station_id` INT NULL,
-  `accessoir_id` INT NULL,
+  `accessoirs` JSON NULL,
   `cours` INT NULL,
   `date` DATE NULL,
   `time` TIME NULL,
@@ -115,8 +116,7 @@ CREATE TABLE IF NOT EXISTS `reservation_hold` (
   KEY `ix_hold_game1` (`game1_id`),
   KEY `ix_hold_game2` (`game2_id`),
   KEY `ix_hold_game3` (`game3_id`),
-  KEY `ix_hold_station` (`station_id`),
-  KEY `ix_hold_accessoir` (`accessoir_id`)
+  KEY `ix_hold_station` (`station_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `otp` (
@@ -216,22 +216,24 @@ ALTER TABLE `reservation_hold`
   FOREIGN KEY (`station_id`) REFERENCES `stations`(`id`)
   ON UPDATE CASCADE ON DELETE SET NULL;
 
--- reservation_hold.accessoir_id -> accessoires.id
-ALTER TABLE `reservation_hold`
-  ADD CONSTRAINT `reservation_hold_fk7`
-  FOREIGN KEY (`accessoir_id`) REFERENCES `accessoires`(`id`)
-  ON UPDATE CASCADE ON DELETE SET NULL;
-
 ALTER TABLE `games`
   ADD CONSTRAINT `games_fk_console_type`
   FOREIGN KEY (`console_type_id`) REFERENCES `console_type`(`id`)
   ON UPDATE CASCADE ON DELETE SET NULL;
+
+ALTER TABLE `reservation_hold`
+    ADD CONSTRAINT `reservation_hold_console_type_id_fk`
+    FOREIGN KEY (`console_type_id`) REFERENCES `console_type`(`id`)
+    ON UPDATE CASCADE;
 
 ALTER TABLE games
   ADD UNIQUE KEY uq_games_biblio (biblio_id),
   ADD INDEX ix_games_console_type (console_type_id);
 
 CREATE INDEX ix_stock_biblio ON console_stock(biblio_id);
+
+ALTER TABLE `accessoires`
+  ADD UNIQUE KEY `uq_accessoires_koha` (`koha_id`);
 
 -- ============
 -- VIEWS
@@ -504,35 +506,74 @@ def insert_console(conn, consoles):
     
     print("=== SEED CONSOLES KOHA: terminé ===\n")
 
-def insert_accessoires(conn, accessoires): 
-    accessoiresTuples = [(d["name"], d["console"], d["koha_id"]) for d in accessoires]
+def insert_accessoires(conn, accessoires):
+    """
+    Upsert des accessoires liés à leurs console_type_id.
+    Nécessite:
+      - la table console_type déjà remplie
+      - un index unique sur accessoires.koha_id
+    """
+    if not accessoires:
+        print("⚠️ Aucun accessoire à insérer")
+        return
+
+    type_map = get_console_type_id_map(conn)
+
+    tuples, skipped = [], 0
+    for d in accessoires:
+        name = (d.get("name") or "").strip()
+        koha_id = d.get("koha_id")
+        platforms = d.get("platforms") or []
+
+        if not name or koha_id in (None, ""):
+            skipped += 1
+            continue
+
+        try:
+            koha_id = int(koha_id)
+        except Exception:
+            skipped += 1
+            continue
+
+        ids = []
+        for p in platforms:
+            cid = type_map.get(p.strip().lower())
+            if cid:
+                ids.append(cid)
+
+        console_json = json.dumps(ids) if ids else "null"
+
+        tuples.append((name, console_json, koha_id))
+
+    if not tuples:
+        print("⚠️ Rien d’insérable (skipped: %d)" % skipped)
+        return
+
     sql = """
         INSERT INTO accessoires
-            (name, console_id, koha_id, lastUpdatedAt, createdAt)
+            (name, consoles, koha_id, lastUpdatedAt, createdAt)
         VALUES
             (%s, CAST(%s AS JSON), %s, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+            name = VALUES(name),
+            consoles = CAST(VALUES(consoles) AS JSON),
+            lastUpdatedAt = NOW()
     """
+
+    BATCH = 500
+    affected = 0
     try:
-        cur = conn.cursor()
-        cur.executemany(sql, accessoiresTuples)
+        with conn.cursor() as cur:
+            for i in range(0, len(tuples), BATCH):
+                cur.executemany(sql, tuples[i:i+BATCH])
+                affected += cur.rowcount
         conn.commit()
-        print(f"✅ Upsert effectué : {cur.rowcount} lignes (insert).")
+        print(f"✅ Upsert accessoires: {affected} lignes (skipped: {skipped})")
     except mysql.connector.Error as err:
-        print(f"Erreur MySQL pendant l'upsert : {err}")
-    finally:
-        try:
-            cur.close()
-        except Exception:
-            pass
+        print(f"❌ Erreur MySQL pendant l'upsert accessoires : {err}")
+        conn.rollback()
     print("=== SEED ACCESSOIRES KOHA: terminé ===\n")
 
-def insert_console_types(conn, console_types):
-    """
-    OBSOLÈTE - Cette fonction n'est plus nécessaire car insert_console
-    crée automatiquement les console_type
-    """
-    print("\n⚠️ insert_console_types() est obsolète avec la nouvelle architecture")
-    print("Les types de consoles sont créés automatiquement par insert_console()")
 
 def print_sql_error(prefix, e: Error):
     err_no = getattr(e, "errno", None)
