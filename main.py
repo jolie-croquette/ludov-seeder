@@ -11,6 +11,7 @@ except ImportError:
     pass
 
 import db
+import marc_in_json_helper as marc
 import sys, os, shutil, subprocess, json
 
 CONFIG = db.get_config()
@@ -660,14 +661,13 @@ def fetch_console(conn):
 def seed_console_types(conn, consoles):
     print("\n=== SEED TYPES DE CONSOLES: demarrage ===")
 
-    # Extraire les noms de consoles et éliminer les doublons
     console_names = []
     seen_names = set()
     
     for console in consoles:
         name = console.get("title") or console.get("name", "")
         if name and name not in seen_names:
-            console_names.append(name)  # Ajouter directement le nom (string)
+            console_names.append(name)
             seen_names.add(name)
     
     print(f">>> {len(console_names)} types de consoles uniques trouvés")
@@ -675,24 +675,96 @@ def seed_console_types(conn, consoles):
     if console_names:
         db.insert_console_types(conn, console_names)
 
-def fetch_accessoires(conn): 
-    print("\n=== SEED ACCESSOIRES: demarrage ===")
-    url = "https://www.ludov.ca/koha/access/catalogue_source_access.json"
-    headers = {"Accept": "application/json"}
-    resp = requests.get(url, headers=headers, timeout=60)
+def fetch_accessoires(conn):
+    print("\n=== SEED ACCESSOIRES: démarrage ===")
+    url = f"{BASE_URL}{ENDPOINT}"
+
+    page_size = min(PER_PAGE if isinstance(PER_PAGE, int) and PER_PAGE > 0 else 500, 500)
+    headers = {
+        "Accept": "application/marc-in-json",
+        "Accept-Encoding": "gzip",
+        "User-Agent": "LUDOVSeeder/2.0",
+    }
+    params = {
+        "_per_page": page_size,
+        "q": json.dumps({"item_type": "ACCESSOIRE"})
+    }
+
+    results, seen_koha = [], set()
+
+    def consume(records_list):
+        added = 0
+        for rec in records_list:
+            row = marc.extract_accessoire_row(rec)
+            if not (row.get("name") or row.get("koha_id")):
+                continue
+            kid = row.get("koha_id")
+            if kid:
+                try:
+                    kid_int = int(kid)
+                except Exception:
+                    continue
+                if kid_int in seen_koha:
+                    continue
+                seen_koha.add(kid_int)
+                row["koha_id"] = kid_int
+            results.append(row); added += 1
+        return added
+
+    resp = requests.get(url, auth=HTTPBasicAuth(USERNAME, PASSWORD), headers=headers, params=params, timeout=60)
     resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, dict):
+        records = data.get("records") or data.get("items") or data.get("data") or []
+        next_url = data.get("next") or (data.get("_links", {}) or {}).get("next")
+    else:
+        records = data if isinstance(data, list) else []
+        next_url = None
 
-    accessoires_data = []
-    for accessoire in resp.json():
-        raw_console = accessoire.get("console")
-        consoles = [int(c.strip()) for c in raw_console.split(";") if c.strip().isdigit()] if raw_console else []
-        accessoires_data.append({
-            "koha_id": int(accessoire.get("id")),
-            "name": accessoire.get("accessoire"),
-            "console": json.dumps(consoles, ensure_ascii=False)
-        })
+    added = consume(records)
+    print(f"Page 1: {len(records)} reçus / {added} ajoutés (cumul: {len(results)})")
 
-    db.insert_accessoires(conn, accessoires_data)
+    page_idx = 1
+    while next_url:
+        page_idx += 1
+        resp = requests.get(next_url, auth=HTTPBasicAuth(USERNAME, PASSWORD), headers=headers, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, dict):
+            records = data.get("records") or data.get("items") or data.get("data") or []
+            next_url = data.get("next") or (data.get("_links", {}) or {}).get("next")
+        else:
+            records = data if isinstance(data, list) else []
+            next_url = None
+        added = consume(records)
+        print(f"Page (next) {page_idx}: {len(records)} reçus / {added} ajoutés (cumul: {len(results)})")
+
+    if not next_url and len(records) == page_size:
+        page = 2
+        while True:
+            params["_page"] = page
+            resp = requests.get(url, auth=HTTPBasicAuth(USERNAME, PASSWORD), headers=headers, params=params, timeout=60)
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, dict):
+                page_records = data.get("records") or data.get("items") or data.get("data") or []
+            else:
+                page_records = data if isinstance(data, list) else []
+            if not page_records:
+                break
+            added = consume(page_records)
+            print(f"Page {page}: {len(page_records)} reçus / {added} ajoutés (cumul: {len(results)})")
+            if len(page_records) < page_size:
+                break
+            page += 1
+
+    print(f">>> Total accessoires prêts à insérer: {len(results)}")
+    if results:
+        db.insert_accessoires(conn, results)
+
+    print("=== SEED ACCESSOIRES: terminé ===")
+    return results
+
 
 def seed_reservations(conn):
     reservations = []
