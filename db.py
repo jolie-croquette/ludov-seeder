@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS `reservation` (
   `console` INT NOT NULL,
   `station` INT NOT NULL,
   `date` DATETIME NOT NULL,
+  `time` TIME NOT NULL,
   `archived` TINYINT NOT NULL DEFAULT '0',
   `createdAt` DATETIME NOT NULL,
   PRIMARY KEY (`id`),
