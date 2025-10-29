@@ -71,18 +71,29 @@ CREATE TABLE IF NOT EXISTS `stations` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `reservation` (
-  `id` INT AUTO_INCREMENT NOT NULL UNIQUE,
+  `id` VARCHAR(255) NOT NULL UNIQUE,
+  `console_id` INT NOT NULL,
+  `console_type_id` INT NOT NULL,
   `user_id` INT NOT NULL,
-  `games` JSON NOT NULL,
-  `console` INT NOT NULL,
-  `station` INT NOT NULL,
-  `date` DATETIME NOT NULL,
+  `game1_id` INT NOT NULL,
+  `game2_id` INT NULL,
+  `game3_id` INT NULL,
+  `accessory_ids` JSON NULL,
+  `cours_id` INT NOT NULL,
+  `station` INT NULL,
+  `date` DATE NOT NULL,
   `time` TIME NOT NULL,
-  `archived` TINYINT NOT NULL DEFAULT '0',
-  `createdAt` DATETIME NOT NULL,
+  `archived` TINYINT NOT NULL DEFAULT 0,
+  `createdAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `lastUpdatedAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `ix_res_user` (`user_id`),
-  KEY `ix_res_console` (`console`),
+  KEY `ix_res_console` (`console_id`),
+  KEY `ix_res_console_type` (`console_type_id`),
+  KEY `ix_res_game1` (`game1_id`),
+  KEY `ix_res_game2` (`game2_id`),
+  KEY `ix_res_game3` (`game3_id`),
+  KEY `ix_res_cours` (`cours_id`),
   KEY `ix_res_station` (`station`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -175,11 +186,35 @@ ALTER TABLE `reservation`
   FOREIGN KEY (`user_id`) REFERENCES `users`(`id`)
   ON UPDATE CASCADE ON DELETE RESTRICT;
 
--- reservation.console -> console_stock.id (CORRIGÉ)
+-- reservation.console_id -> console_stock.id
 ALTER TABLE `reservation`
   ADD CONSTRAINT `reservation_fk3`
-  FOREIGN KEY (`console`) REFERENCES `console_stock`(`id`)
+  FOREIGN KEY (`console_id`) REFERENCES `console_stock`(`id`)
   ON UPDATE CASCADE ON DELETE RESTRICT;
+
+-- reservation.game1_id -> games.id
+ALTER TABLE `reservation`
+    ADD CONSTRAINT `reservation_fk4`
+    FOREIGN KEY (`game1_id`) REFERENCES `games`(`id`)
+    ON UPDATE CASCADE ON DELETE RESTRICT;
+
+-- reservation.game2_id -> games.id
+ALTER TABLE `reservation`
+    ADD CONSTRAINT `reservation_fk5`
+    FOREIGN KEY (`game2_id`) REFERENCES `games`(`id`)
+    ON UPDATE CASCADE ON DELETE RESTRICT;
+
+-- reservation.game3_id -> games.id
+ALTER TABLE `reservation`
+    ADD CONSTRAINT `reservation_fk6`
+    FOREIGN KEY (`game3_id`) REFERENCES `games`(`id`)
+    ON UPDATE CASCADE ON DELETE RESTRICT;
+
+-- reservation.cours_id -> cours.id
+ALTER TABLE `reservation`
+    ADD CONSTRAINT `reservation_fk7`
+    FOREIGN KEY (`cours_id`) REFERENCES `cours`(`id`)
+    ON UPDATE CASCADE ON DELETE RESTRICT;
 
 -- reservation_hold.user_id -> users.id
 ALTER TABLE `reservation_hold`
@@ -240,9 +275,6 @@ ALTER TABLE `accessoires`
 -- VIEWS
 -- ============
 
-CREATE VIEW `GAME_AVAILABLE` AS
-    SELECT * FROM games GROUP BY titre;
-
 -- Vue pour afficher les consoles disponibles par type
 CREATE OR REPLACE VIEW `console_catalog` AS
 SELECT 
@@ -260,6 +292,7 @@ ORDER BY ct.name;
 
 SET FOREIGN_KEY_CHECKS=1;
 """
+
 SYSTEM_SCHEMAS = {"mysql", "information_schema", "performance_schema", "sys"}
 
 def get_config(path: str = FILE_PATH) -> Dict[str, Any]:
