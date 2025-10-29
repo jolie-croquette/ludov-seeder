@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS `stations` (
 
 CREATE TABLE IF NOT EXISTS `reservation` (
   `id` INT AUTO_INCREMENT NOT NULL UNIQUE,
-  `etudiant_id` INT NOT NULL,
+  `user_id` INT NOT NULL,
   `games` JSON NOT NULL,
   `console` INT NOT NULL,
   `station` INT NOT NULL,
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS `reservation` (
   `archived` TINYINT NOT NULL DEFAULT '0',
   `createdAt` DATETIME NOT NULL,
   PRIMARY KEY (`id`),
-  KEY `ix_res_user` (`etudiant_id`),
+  KEY `ix_res_user` (`user_id`),
   KEY `ix_res_console` (`console`),
   KEY `ix_res_station` (`station`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -169,10 +169,10 @@ CREATE TABLE `hour_ranges` (
 -- FOREIGN KEYS
 -- ============
 
--- reservation.etudiant_id -> users.id
+-- reservation.user_id -> users.id
 ALTER TABLE `reservation`
   ADD CONSTRAINT `reservation_fk1`
-  FOREIGN KEY (`etudiant_id`) REFERENCES `users`(`id`)
+  FOREIGN KEY (`user_id`) REFERENCES `users`(`id`)
   ON UPDATE CASCADE ON DELETE RESTRICT;
 
 -- reservation.console -> console_stock.id (CORRIGÉ)
