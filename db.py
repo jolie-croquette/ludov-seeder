@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS `stations` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS `reservations` (
+CREATE TABLE IF NOT EXISTS `reservation` (
   `id` INT AUTO_INCREMENT NOT NULL UNIQUE,
   `etudiant_id` INT NOT NULL,
   `games` JSON NOT NULL,
