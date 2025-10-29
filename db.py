@@ -169,15 +169,15 @@ CREATE TABLE `hour_ranges` (
 -- FOREIGN KEYS
 -- ============
 
--- reservations.etudiant_id -> users.id
-ALTER TABLE `reservations`
-  ADD CONSTRAINT `reservations_fk1`
+-- reservation.etudiant_id -> users.id
+ALTER TABLE `reservation`
+  ADD CONSTRAINT `reservation_fk1`
   FOREIGN KEY (`etudiant_id`) REFERENCES `users`(`id`)
   ON UPDATE CASCADE ON DELETE RESTRICT;
 
--- reservations.console -> console_stock.id (CORRIGÉ)
-ALTER TABLE `reservations`
-  ADD CONSTRAINT `reservations_fk3`
+-- reservation.console -> console_stock.id (CORRIGÉ)
+ALTER TABLE `reservation`
+  ADD CONSTRAINT `reservation_fk3`
   FOREIGN KEY (`console`) REFERENCES `console_stock`(`id`)
   ON UPDATE CASCADE ON DELETE RESTRICT;
 
