@@ -84,6 +84,10 @@ CREATE TABLE IF NOT EXISTS `reservation` (
   `date` DATE NOT NULL,
   `time` TIME NOT NULL,
   `archived` TINYINT NOT NULL DEFAULT 0,
+  `reminder_enabled` TINYINT(1) NOT NULL DEFAULT 0,
+  `reminder_hours_before` INT NULL,
+  `reminder_sent` TINYINT(1) NOT NULL DEFAULT 0,
+  `reminder_sent_at` DATETIME NULL;
   `createdAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `lastUpdatedAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -175,6 +179,19 @@ CREATE TABLE `hour_ranges` (
     `end_minute` VARCHAR(2) NOT NULL,
     FOREIGN KEY (`weekly_id`) REFERENCES `weekly_availabilities`(`weekly_id`) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS `email_logs` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `reservation_id` VARCHAR(255) NOT NULL,
+  `email_type` VARCHAR(50) NOT NULL,
+  `recipient` VARCHAR(255),
+  `status` ENUM('sent', 'failed') NOT NULL,
+  `error_message` TEXT,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_reservation (reservation_id),
+  KEY idx_status (status),
+  KEY idx_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ============
 -- FOREIGN KEYS
@@ -270,6 +287,9 @@ CREATE INDEX ix_stock_biblio ON console_stock(biblio_id);
 
 ALTER TABLE `accessoires`
   ADD UNIQUE KEY `uq_accessoires_koha` (`koha_id`);
+
+CREATE INDEX idx_reminder_pending
+  ON reservation(reminder_enabled, reminder_sent, date, time);
 
 -- ============
 -- VIEWS
