@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS `reservation` (
   `reminder_enabled` TINYINT(1) NOT NULL DEFAULT 0,
   `reminder_hours_before` INT NULL,
   `reminder_sent` TINYINT(1) NOT NULL DEFAULT 0,
-  `reminder_sent_at` DATETIME NULL;
+  `reminder_sent_at` DATETIME NULL,
   `createdAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `lastUpdatedAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
