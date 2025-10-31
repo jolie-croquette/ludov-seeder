@@ -488,6 +488,8 @@ def insert_console(conn, consoles):
         for console in consoles:
             biblio_id = console.get("biblio_id")
             name = console.get("title", "").strip()
+            if console.get("subtitle"):
+                name += " " + console.get("subtitle", "").strip()
             timestamp = console.get("timestamp")
             
             if not biblio_id or not name:
