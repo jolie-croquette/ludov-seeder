@@ -157,7 +157,6 @@ class IGDBClient:
             query = f'''
             search "{clean_title}";
             fields name, cover.image_id;
-            where platforms = ({platform_id});
             limit 1;
             '''
         else:
@@ -315,7 +314,7 @@ def main():
             
             fetch_all_biblios()
             fetch_console(conn)
-            seed_games_from_koha_without_covers(conn, platform_mapping)
+            fetch_games_from_marc(conn, platform_mapping)
             fetch_accessoires(conn)
             seed_reservations(conn)
             
@@ -432,91 +431,154 @@ def fetch_biblios_page(page: int):
     resp.raise_for_status()
     return resp.json()
 
-def seed_games_from_koha_without_covers(conn, platform_mapping):
-    """Seed initial depuis Koha SANS fetch IGDB mais AVEC infos plateforme"""
-    print("\n=== SEED JEUX KOHA (avec plateformes, sans covers): demarrage ===")
-    
-    type_map = db.get_console_type_id_map(conn)
+def fetch_games_from_marc(conn, platform_mapping):
+    """
+    Importe/maj les JEUX depuis l'API Koha en MARC-in-JSON.
+    Utilise en priorité platform_mapping (Ludov), sinon 753$a.
+    """
+    print("\n=== SEED JEUX (MARC-in-JSON) : démarrage ===")
+    url = f"{BASE_URL}{ENDPOINT}"
+    page_size = min(PER_PAGE if isinstance(PER_PAGE, int) and PER_PAGE > 0 else 500, 500)
+    headers = {
+        "Accept": "application/marc-in-json",
+        "Accept-Encoding": "gzip",
+        "User-Agent": "LUDOVSeeder/2.0",
+    }
+    params = {"_per_page": page_size, "q": json.dumps({"item_type": "JEU"})}
 
+    type_map = db.get_console_type_id_map(conn)  # {name_lower: id}
     to_upsert = []
-    stats = {"total": 0, "with_platform": 0, "without_platform": 0, "with_type": 0}
+    stats = {"total": 0, "mapped_ludov": 0, "mapped_753": 0}
 
-    for b in ALL_BIBLIOS:
-        if b.get("item_type") != "JEU":
-            continue
+    def resolve_platforms(row):
+        """
+        Retourne (platform_name, platform_id, console_koha_id, console_type_id).
+        Priorité: platform_mapping (Ludov) -> 753$a (première plateforme reconnue).
+        """
+        biblio_id = str(row["biblio_id"])
+        # 1) Mapping Ludov si dispo
+        pm = platform_mapping.get(biblio_id)
+        if pm:
+            name = pm.get("console")
+            igdb_id = pm.get("igdb_id")
+            koha_console_id = pm.get("koha_console_id")
+            ctid = type_map.get((name or "").strip().lower())
+            return (name, int(igdb_id) if igdb_id is not None else None,
+                    int(koha_console_id) if koha_console_id is not None else None,
+                    int(ctid) if ctid is not None else None, True)
 
-        ts_str = b.get("timestamp")
-        if not ts_str:
-            continue
-        ts_local = iso_to_toronto(ts_str)
+        # 2) Sinon 753$a (choisir la première reconnue)
+        for candidate in (row.get("platforms") or []):
+            name = candidate.strip()
+            if not name:
+                continue
+            igdb_id = PLATFORM_NAME_TO_IGDB.get(name)  # mapping existant
+            ctid = type_map.get(name.strip().lower())
+            if igdb_id or ctid:
+                return (name,
+                        int(igdb_id) if igdb_id is not None else None,
+                        None,
+                        int(ctid) if ctid is not None else None,
+                        False)
+        return (None, None, None, None, None)
 
-        biblio_id = b.get("biblio_id")
-        if not biblio_id:
-            continue
+    def iso_005_to_datetime(iso_005):
+        # 005 ~ "YYYYMMDDhhmmss.s" -> on tolère, sinon NOW()
+        from datetime import datetime
         try:
-            gid = int(biblio_id)
+            core = iso_005.split('.')[0]
+            dt = datetime.strptime(core, "%Y%m%d%H%M%S")
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
         except Exception:
-            continue
+            # fallback: utiliser fenêtre Toronto déjà définie si tu veux,
+            # ici on fait simple:
+            from datetime import datetime
+            return datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
 
-        title = (b.get("title") or "").strip()
-        subtitle = (b.get("subtitle") or "").strip()
-        titre = f"{title} - {subtitle}" if subtitle else title
-        if not titre: 
-            continue
+    # 1ère page
+    resp = requests.get(url, auth=HTTPBasicAuth(USERNAME, PASSWORD), headers=headers, params=params, timeout=60)
+    resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, dict):
+        records = data.get("records") or data.get("items") or data.get("data") or []
+        next_url = data.get("next") or (data.get("_links", {}) or {}).get("next")
+    else:
+        records = data if isinstance(data, list) else []
+        next_url = None
 
-        author = (b.get("author") or None)
-        available = 1
+    def consume(recs):
+        added = 0
+        for rec in recs:
+            row = marc.extract_game_row(rec)
+            if not row:
+                continue
+            platform_name, platform_id, console_koha_id, console_type_id, via_ludov = resolve_platforms(row)
+            if via_ludov is True:
+                stats["mapped_ludov"] += 1
+            elif via_ludov is False:
+                stats["mapped_753"] += 1
 
-        # Récupérer les infos de plateforme depuis le mapping Ludov
-        platform_name = None
-        platform_id = None
-        console_koha_id = None
-        console_type_id = None
-        
-        platform_info = platform_mapping.get(str(biblio_id))
-        if platform_info:
-            stats["with_platform"] += 1
-            platform_name = platform_info.get("console")
-            platform_id = platform_info.get("igdb_id")
-            console_koha_id = platform_info.get("koha_console_id")
-            key = (platform_name or "").strip().lower()
-            console_type_id = type_map.get(key)
-            if console_type_id:
-                stats["with_type"] += 1
+            to_upsert.append((
+                row["biblio_id"],                # biblio_id
+                row["titre"],                    # titre
+                row.get("author"),               # author
+                platform_name,                   # platform
+                platform_id,                     # platform_id
+                console_koha_id,                 # console_koha_id
+                console_type_id,                 # console_type_id
+                iso_005_to_datetime(row.get("timestamp") or ""),  # createdAt
+            ))
+            stats["total"] += 1
+        return added
+
+    consume(records)
+    page_idx = 1
+    while next_url:
+        page_idx += 1
+        r = requests.get(next_url, auth=HTTPBasicAuth(USERNAME, PASSWORD), headers=headers, timeout=60)
+        r.raise_for_status()
+        data = r.json()
+        if isinstance(data, dict):
+            records = data.get("records") or data.get("items") or data.get("data") or []
+            next_url = data.get("next") or (data.get("_links", {}) or {}).get("next")
         else:
-            stats["without_platform"] += 1
+            records = data if isinstance(data, list) else []
+            next_url = None
+        consume(records)
 
-        to_upsert.append((
-            gid,                    # biblio_id
-            titre,                  # titre
-            author,                 # author
-            platform_name,          # platform
-            int(platform_id) if platform_id is not None else None,       # platform_id
-            int(console_koha_id) if console_koha_id is not None else None, # console_koha_id
-            int(console_type_id) if console_type_id is not None else None, # console_type_id
-            ts_local.strftime("%Y-%m-%d %H:%M:%S"),                       # createdAt
-        ))
+    # Fallback pagination _page si next absent
+    if not next_url and len(records) == page_size:
+        page = 2
+        while True:
+            params["_page"] = page
+            r = requests.get(url, auth=HTTPBasicAuth(USERNAME, PASSWORD), headers=headers, params=params, timeout=60)
+            r.raise_for_status()
+            data = r.json()
+            if isinstance(data, dict):
+                page_records = data.get("records") or data.get("items") or data.get("data") or []
+            else:
+                page_records = data if isinstance(data, list) else []
+            if not page_records:
+                break
+            consume(page_records)
+            if len(page_records) < page_size:
+                break
+            page += 1
 
-        stats["total"] += 1
-        
-        # Affichage progression simple
-        if stats["total"] % 100 == 0:
-            print(f"... {stats['total']} jeux traités "
-                  f"({stats['with_platform']} avec plateforme, {stats['with_type']} avec type)")
     if not to_upsert:
-        print("Aucun jeu a inserer.")
-        return 
-    
-    # Stats finales
+        print("Aucun jeu à insérer (MARC).")
+        return
+
     print(f"\n{'='*60}")
-    print("STATISTIQUES SEED KOHA")
+    print("STATISTIQUES SEED JEUX (MARC)")
     print(f"{'='*60}")
-    print(f"Total jeux importés       : {stats['total']}")
-    print(f"Jeux avec plateforme      : {stats['with_platform']}")
-    print(f"Jeux mappés à un type     : {stats['with_type']}")
-    print(f"Jeux sans plateforme      : {stats['without_platform']}")
-    
+    print(f"Total jeux trouvés      : {stats['total']}")
+    print(f"Plateforme via Ludov    : {stats['mapped_ludov']}")
+    print(f"Plateforme via 753$a    : {stats['mapped_753']}")
+
     db.insertGameIntoDatabase(conn, to_upsert)
+    print("=== SEED JEUX (MARC-in-JSON) : terminé ===")
+
 
 def update_game_covers(conn, platform_mapping, fetch_all=False):
     """Met à jour UNIQUEMENT les covers des jeux existants (ne touche pas aux plateformes)"""

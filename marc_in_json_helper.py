@@ -115,3 +115,51 @@ def extract_accessoire_row(record):
         "platforms": plateformes,
         "koha_id": koha_id
     }
+
+# --- à APPEND dans marc_in_json_helper.py ---
+
+def extract_game_row(record):
+    """Retourne un dict jeu à partir d'une notice MARC-JSON.
+
+    Sortie:
+      {
+        "biblio_id": int,
+        "titre": str,
+        "author": Optional[str],
+        "platforms": List[str],  # 753$a, nettoyé/dédoublonné
+        "timestamp": str,        # ISO (005), fallback now si absent
+      }
+    """
+    # ID Koha (999$c ou 999$d)
+    koha_id = first_subfield(record, "999", "c") or first_subfield(record, "999", "d")
+    if not koha_id:
+        return {}
+
+    try:
+        biblio_id = int(str(koha_id).strip())
+    except Exception:
+        return {}
+
+    # Titre (245 $a + $b optionnel)
+    t_a = first_subfield(record, "245", "a") or ""
+    t_b = first_subfield(record, "245", "b") or first_subfield(record, "245", "9") or ""
+    raw_title = f"{t_a} {t_b}".strip(" /:;., ").strip()
+    if not raw_title:
+        return {}
+
+    # Auteur (110 corporate, sinon 100 perso)
+    author = first_subfield(record, "110", "a") or first_subfield(record, "100", "a")
+
+    # Plateformes (753 $a, éventuellement multiples)
+    plateformes_raw = first_subfield(record, "753", "a")
+    platforms = _split_platforms(plateformes_raw)
+
+    # Timestamp (005)
+    ts = get_control_field(record, "005") or ""
+    return {
+        "biblio_id": biblio_id,
+        "titre": raw_title,
+        "author": author.strip() if author else None,
+        "platforms": platforms,
+        "timestamp": ts
+    }
