@@ -316,7 +316,6 @@ def main():
             fetch_console(conn)
             fetch_games_from_marc(conn, platform_mapping)
             fetch_accessoires(conn)
-            seed_reservations(conn)
             
             # Après le seed, proposer de fetch les covers
             print("\n" + "="*50)
@@ -718,24 +717,6 @@ def fetch_console(conn):
 
     db.insert_console(conn, consoles)
     return consoles
-    
-
-def seed_console_types(conn, consoles):
-    print("\n=== SEED TYPES DE CONSOLES: demarrage ===")
-
-    console_names = []
-    seen_names = set()
-    
-    for console in consoles:
-        name = console.get("title") or console.get("name", "")
-        if name and name not in seen_names:
-            console_names.append(name)
-            seen_names.add(name)
-    
-    print(f">>> {len(console_names)} types de consoles uniques trouvés")
-    
-    if console_names:
-        db.insert_console_types(conn, console_names)
 
 def fetch_accessoires(conn):
     print("\n=== SEED ACCESSOIRES: démarrage ===")
@@ -758,7 +739,7 @@ def fetch_accessoires(conn):
         added = 0
         for rec in records_list:
             row = marc.extract_accessoire_row(rec)
-            if not (row.get("name") or row.get("koha_id")):
+            if not (row.get("name") or row.get("koha_id") or row.get("hidden")):
                 continue
             kid = row.get("koha_id")
             if kid:
@@ -826,10 +807,6 @@ def fetch_accessoires(conn):
 
     print("=== SEED ACCESSOIRES: terminé ===")
     return results
-
-
-def seed_reservations(conn):
-    reservations = []
 
 if __name__ == "__main__":
     main()

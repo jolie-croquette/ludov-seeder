@@ -108,12 +108,14 @@ def extract_accessoire_row(record):
     titre = first_subfield(record, "245", "a")
     plateforme_raw = first_subfield(record, "753", "a")
     koha_id = first_subfield(record, "999", "c") or first_subfield(record, "999", "d")
+    hidden = first_subfield(record, "942", "n")
 
     plateformes = _split_platforms(plateforme_raw)
     return {
         "name": (titre or "").strip(),
         "platforms": plateformes,
-        "koha_id": koha_id
+        "koha_id": koha_id,
+        "hidden" : 1 if hidden and hidden.strip().lower() in ['1', 'true', 'yes'] else 0
     }
 
 # --- à APPEND dans marc_in_json_helper.py ---
