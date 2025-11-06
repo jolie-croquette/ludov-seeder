@@ -12,7 +12,7 @@ except ImportError:
 
 import db
 import marc_in_json_helper as marc
-import sys, os, shutil, subprocess, json
+import json
 
 CONFIG = db.get_config()
 
@@ -314,8 +314,8 @@ def main():
             
             fetch_all_biblios()
             fetch_console(conn)
-            fetch_games_from_marc(conn, platform_mapping)
             fetch_accessoires(conn)
+            fetch_games_from_marc(conn, platform_mapping)
             
             # Après le seed, proposer de fetch les covers
             print("\n" + "="*50)
@@ -505,6 +505,8 @@ def fetch_games_from_marc(conn, platform_mapping):
         records = data if isinstance(data, list) else []
         next_url = None
 
+    known_acc_ids = db.get_known_accessory_ids(conn)
+
     def consume(recs):
         added = 0
         for rec in recs:
@@ -517,6 +519,11 @@ def fetch_games_from_marc(conn, platform_mapping):
             elif via_ludov is False:
                 stats["mapped_753"] += 1
 
+            req_acc = row.get("required_accessories") or []
+            req_acc = [i for i in req_acc if i in known_acc_ids]
+
+            req_acc_json = json.dumps(req_acc) if req_acc else None
+
             to_upsert.append((
                 row["biblio_id"],                # biblio_id
                 row["titre"],                    # titre
@@ -525,6 +532,7 @@ def fetch_games_from_marc(conn, platform_mapping):
                 platform_id,                     # platform_id
                 console_koha_id,                 # console_koha_id
                 console_type_id,                 # console_type_id
+                req_acc_json,                    # required_accessories
                 iso_005_to_datetime(row.get("timestamp") or ""),  # createdAt
             ))
             stats["total"] += 1
