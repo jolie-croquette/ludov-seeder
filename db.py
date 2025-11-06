@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS `accessoires` (
   `name` TEXT NOT NULL,
   `consoles` JSON NOT NULL,
   `koha_id` INT NOT NULL,
+  `hidden` TINYINT NOT NULL DEFAULT 0,
   `lastUpdatedAt` DATETIME NOT NULL,
   `createdAt` DATETIME NOT NULL,
   PRIMARY KEY (`id`)
@@ -579,6 +580,7 @@ def insert_accessoires(conn, accessoires):
         name = (d.get("name") or "").strip()
         koha_id = d.get("koha_id")
         platforms = d.get("platforms") or []
+        hidden = d.get("hidden", 0)
 
         if not name or koha_id in (None, ""):
             skipped += 1
@@ -598,7 +600,7 @@ def insert_accessoires(conn, accessoires):
 
         console_json = json.dumps(ids) if ids else "null"
 
-        tuples.append((name, console_json, koha_id))
+        tuples.append((name, console_json, koha_id, hidden))
 
     if not tuples:
         print("⚠️ Rien d’insérable (skipped: %d)" % skipped)
@@ -606,12 +608,13 @@ def insert_accessoires(conn, accessoires):
 
     sql = """
         INSERT INTO accessoires
-            (name, consoles, koha_id, lastUpdatedAt, createdAt)
+            (name, consoles, koha_id, hidden, lastUpdatedAt, createdAt)
         VALUES
-            (%s, CAST(%s AS JSON), %s, NOW(), NOW())
+            (%s, CAST(%s AS JSON), %s, %s, NOW(), NOW())
         ON DUPLICATE KEY UPDATE
             name = VALUES(name),
             consoles = CAST(VALUES(consoles) AS JSON),
+            hidden = VALUES(hidden),
             lastUpdatedAt = NOW()
     """
 
