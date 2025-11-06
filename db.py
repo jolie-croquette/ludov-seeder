@@ -497,7 +497,6 @@ def insert_console(conn, consoles):
                 continue
             
             try:
-                # 1. Vérifier si le console_type existe
                 cursor.execute(
                     "SELECT id FROM console_type WHERE name = %s",
                     (name,)
