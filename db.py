@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS `games` (
   `console_koha_id` INT DEFAULT NULL,
   `picture` LONGTEXT,
   `holding` TINYINT NOT NULL DEFAULT 0,
+  `required_accessories` JSON DEFAULT NULL,
   `createdAt` DATETIME NOT NULL,
   `lastUpdatedAt` DATETIME DEFAULT NOW(),
   PRIMARY KEY (`id`)
@@ -448,9 +449,9 @@ def insertGameIntoDatabase(conn, games_data):
     """
     sql = """
     INSERT INTO games
-        (biblio_id, titre, author, platform, platform_id, console_koha_id, console_type_id, createdAt)
+        (biblio_id, titre, author, platform, platform_id, console_koha_id, console_type_id, required_accessories, createdAt)
     VALUES
-        (%s, %s, %s, %s, %s, %s, %s, %s)
+        (%s, %s, %s, %s, %s, %s, %s, %s, %s)
     ON DUPLICATE KEY UPDATE
         titre = VALUES(titre),
         author = VALUES(author),
@@ -458,6 +459,7 @@ def insertGameIntoDatabase(conn, games_data):
         platform_id = VALUES(platform_id),
         console_koha_id = VALUES(console_koha_id),
         console_type_id = VALUES(console_type_id),
+        required_accessories = VALUES(required_accessories),
         lastUpdatedAt = NOW()
     """
     with conn.cursor() as cur:
@@ -647,3 +649,12 @@ def get_console_type_id_map(conn):
         for row in cur.fetchall():
             m[row["name"].strip().lower()] = row["id"]
     return m
+
+def get_known_accessory_ids(conn):
+    ids = set()
+    with conn.cursor() as cur:
+        cur.execute("SELECT koha_id FROM accessoires")
+        for (kid,) in cur.fetchall():
+            if kid is not None:
+                ids.add(int(kid))
+    return ids

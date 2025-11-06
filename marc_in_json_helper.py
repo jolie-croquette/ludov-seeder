@@ -20,9 +20,8 @@ Améliorations :
 """
 
 from __future__ import annotations
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-import json
 import re
 
 
@@ -156,6 +155,21 @@ def extract_game_row(record):
     plateformes_raw = first_subfield(record, "753", "a")
     platforms = _split_platforms(plateformes_raw)
 
+    #accessoires requis
+    raw_accessories = all_subfields(record, "538", "9")
+    required_accessories = []
+    for acc in raw_accessories:
+        for part in str(acc).replace(",", ";").split(";"):
+            val = part.strip()
+            if val:
+                try :
+                    required_accessories.append(int(val))
+                except Exception:
+                    pass
+
+    seen = set()
+    required_accessories = [x for x in required_accessories if not (x in seen or seen.add(x))]
+
     # Timestamp (005)
     ts = get_control_field(record, "005") or ""
     return {
@@ -163,5 +177,6 @@ def extract_game_row(record):
         "titre": raw_title,
         "author": author.strip() if author else None,
         "platforms": platforms,
+        "required_accessories": list(dict.fromkeys(required_accessories)),
         "timestamp": ts
     }
