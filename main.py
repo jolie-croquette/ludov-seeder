@@ -668,7 +668,6 @@ def update_game_covers(conn, platform_mapping, fetch_all=False):
                 print(f"    XXX Pas de cover")
             
             stats["processed"] += 1
-            time.sleep(0.26)
             
         except Exception as e:
             stats["failed"] += 1

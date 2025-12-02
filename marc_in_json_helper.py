@@ -108,13 +108,21 @@ def extract_accessoire_row(record):
     plateforme_raw = first_subfield(record, "753", "a")
     koha_id = first_subfield(record, "999", "c") or first_subfield(record, "999", "d")
     hidden = first_subfield(record, "942", "n")
+    available_raw  = first_subfield(record, "583", "9")
 
     plateformes = _split_platforms(plateforme_raw)
+
+    if available_raw is None:
+        available = 1
+    else:
+        available = 1 if available_raw.strip() == "0" else 0
+
     return {
         "name": (titre or "").strip(),
         "platforms": plateformes,
         "koha_id": koha_id,
-        "hidden" : 1 if hidden and hidden.strip().lower() in ['1', 'true', 'yes'] else 0
+        "hidden" : 1 if hidden and hidden.strip().lower() in ['1', 'true', 'yes'] else 0,
+        "available" : available
     }
 
 # --- à APPEND dans marc_in_json_helper.py ---
@@ -172,6 +180,8 @@ def extract_game_row(record):
 
     # Timestamp (005)
     ts = get_control_field(record, "005") or ""
+
+
     return {
         "biblio_id": biblio_id,
         "titre": raw_title,

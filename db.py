@@ -1,10 +1,25 @@
 import json
+import re
 import mysql.connector
 from mysql.connector import Error
 from typing import Any, Dict
 
 FILE_PATH = "config.json"
 REQUIRED_KEYS = ["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"]
+
+# Regex pour enlever les "(copie X)" à la fin des noms d'accessoires
+COPY_SUFFIX_RE = re.compile(r"\s*\(copie\s*\d+\)\s*$", re.IGNORECASE)
+
+def sanitize_accessory_name(name: str) -> str:
+    """
+    Nettoie le nom d'un accessoire pour enlever les '(copie X)' de fin.
+    Exemple: 'Manette Xbox (copie 2)' -> 'Manette Xbox'
+    """
+    if not name:
+        return ""
+    return COPY_SUFFIX_RE.sub("", name).strip()
+
+
 SQL_SCHEMA = r"""
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS=0;
@@ -18,14 +33,13 @@ CREATE TABLE IF NOT EXISTS `users` (
   `isAdmin` TINYINT NOT NULL,
   `lastUpdatedAt` DATETIME NOT NULL,
   `createdAt` DATETIME NOT NULL,
+  `LastLogin` DATETIME DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `console_type` ( 
     `id` INT AUTO_INCREMENT NOT NULL UNIQUE,
     `name` VARCHAR(255) NOT NULL UNIQUE,
-    `picture` LONGTEXT,
-    `description` TEXT,
     PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -34,7 +48,6 @@ CREATE TABLE IF NOT EXISTS `console_stock` (
   `console_type_id` INT NOT NULL,
   `biblio_id` INT NOT NULL,
   `name` VARCHAR(255) NOT NULL,
-  `picture` LONGTEXT,
   `is_active` TINYINT NOT NULL DEFAULT 1,
   `holding` TINYINT NOT NULL DEFAULT 0,
   `createdAt` DATETIME NOT NULL DEFAULT NOW(),
@@ -81,7 +94,8 @@ CREATE TABLE IF NOT EXISTS `reservation` (
   `game1_id` INT NOT NULL,
   `game2_id` INT NULL,
   `game3_id` INT NULL,
-  `accessory_ids` JSON NULL,
+  `accessoirs_ids` JSON NULL,
+  `accessoirs_type_ids` JSON NULL,
   `cours_id` INT NOT NULL,
   `station` INT NULL,
   `date` DATE NOT NULL,
@@ -100,19 +114,29 @@ CREATE TABLE IF NOT EXISTS `reservation` (
   KEY `ix_res_game1` (`game1_id`),
   KEY `ix_res_game2` (`game2_id`),
   KEY `ix_res_game3` (`game3_id`),
-  KEY `ix_res_cours` (`cours_id`),
   KEY `ix_res_station` (`station`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS `accessoires` (
+CREATE TABLE IF NOT EXISTS `accessoires_type` ( 
+    `id` INT AUTO_INCREMENT NOT NULL UNIQUE,
+    `name` VARCHAR(255) NOT NULL UNIQUE,
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `accessoires_stock` (
   `id` INT AUTO_INCREMENT UNIQUE NOT NULL,
+  `accessoire_type_id` INT NOT NULL,
   `name` TEXT NOT NULL,
   `consoles` JSON NOT NULL,
   `koha_id` INT NOT NULL,
+  `holding` TINYINT NOT NULL DEFAULT 0,
   `hidden` TINYINT NOT NULL DEFAULT 0,
+  `available` TINYINT NOT NULL DEFAULT 0,
   `lastUpdatedAt` DATETIME NOT NULL,
   `createdAt` DATETIME NOT NULL,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  FOREIGN KEY (`accessoire_type_id`) REFERENCES `accessoires_type`(`id`)
+      ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `reservation_hold` (
@@ -124,7 +148,8 @@ CREATE TABLE IF NOT EXISTS `reservation_hold` (
   `game2_id` INT NULL,
   `game3_id` INT NULL,
   `station_id` INT NULL,
-  `accessoirs` JSON NULL,
+  `accessoirs_ids` JSON NULL,
+  `accessoirs_type_ids` JSON NULL,
   `cours` INT NULL,
   `date` DATE NULL,
   `time` TIME NULL,
@@ -197,6 +222,11 @@ CREATE TABLE IF NOT EXISTS `email_logs` (
   KEY idx_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS `policies` (
+  `policies` LONGTEXT,
+  `lastUpdatedAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ============
 -- FOREIGN KEYS
 -- ============
@@ -229,12 +259,6 @@ ALTER TABLE `reservation`
 ALTER TABLE `reservation`
     ADD CONSTRAINT `reservation_fk6`
     FOREIGN KEY (`game3_id`) REFERENCES `games`(`id`)
-    ON UPDATE CASCADE ON DELETE RESTRICT;
-
--- reservation.cours_id -> cours.id
-ALTER TABLE `reservation`
-    ADD CONSTRAINT `reservation_fk7`
-    FOREIGN KEY (`cours_id`) REFERENCES `cours`(`id`)
     ON UPDATE CASCADE ON DELETE RESTRICT;
 
 -- reservation_hold.user_id -> users.id
@@ -289,7 +313,7 @@ ALTER TABLE games
 
 CREATE INDEX ix_stock_biblio ON console_stock(biblio_id);
 
-ALTER TABLE `accessoires`
+ALTER TABLE `accessoires_stock`
   ADD UNIQUE KEY `uq_accessoires_koha` (`koha_id`);
 
 CREATE INDEX idx_reminder_pending
@@ -304,20 +328,67 @@ CREATE OR REPLACE VIEW `console_catalog` AS
 SELECT 
     ct.id as console_type_id,
     ct.name,
-    ct.picture,
-    ct.description,
     COUNT(cs.id) as total_units,
     SUM(CASE WHEN cs.is_active = 1 AND cs.holding = 0 THEN 1 ELSE 0 END) as active_units,
     SUM(CASE WHEN cs.is_active = 0 THEN 1 ELSE 0 END) as inactive_units
 FROM console_type ct
-LEFT JOIN console_stock cs ON ct.id = cs.console_type_id
-GROUP BY ct.id, ct.name, ct.picture, ct.description
-ORDER BY ct.name;
+LEFT JOIN console_stock cs 
+    ON ct.id = cs.console_type_id
+WHERE EXISTS (
+    SELECT 1
+    FROM stations s
+    WHERE JSON_CONTAINS(
+        s.consoles,
+        CAST(ct.id AS JSON),
+        '$'
+    )
+)
+GROUP BY 
+    ct.id, ct.name
+ORDER BY 
+    ct.name;
+
+CREATE OR REPLACE VIEW `accessoires_catalog` AS
+SELECT 
+    at.id AS accessoire_type_id,
+    at.name,
+
+    COUNT(a.id) AS total_units,
+    SUM(CASE WHEN a.hidden = 0 AND a.available = 1 THEN 1 ELSE 0 END) AS available_units,
+    SUM(CASE WHEN a.hidden = 1 THEN 1 ELSE 0 END) AS hidden_units,
+    SUM(CASE WHEN a.available = 0 THEN 1 ELSE 0 END) AS unavailable_units,
+
+    COALESCE(
+      (
+        SELECT JSON_ARRAYAGG(x.console_type_id)
+        FROM (
+          SELECT DISTINCT jt2.console_type_id
+          FROM accessoires_stock a2
+          LEFT JOIN JSON_TABLE(
+            a2.consoles,
+            '$[*]' COLUMNS (console_type_id INT PATH '$')
+          ) jt2 ON TRUE
+          WHERE a2.accessoire_type_id = at.id
+            AND jt2.console_type_id IS NOT NULL
+        ) AS x
+      ),
+      JSON_ARRAY()
+    ) AS console_type_ids
+
+FROM accessoires_type at
+LEFT JOIN accessoires_stock a
+    ON at.id = a.accessoire_type_id
+
+GROUP BY 
+    at.id, at.name
+ORDER BY 
+    at.name;
 
 SET FOREIGN_KEY_CHECKS=1;
 """
 
 SYSTEM_SCHEMAS = {"mysql", "information_schema", "performance_schema", "sys"}
+
 
 def get_config(path: str = FILE_PATH) -> Dict[str, Any]:
     """Charge et valide le fichier de configuration JSON."""
@@ -328,7 +399,9 @@ def get_config(path: str = FILE_PATH) -> Dict[str, Any]:
         raise KeyError(f"Missing config: {', '.join(missing)}")
     return data
 
+
 CONFIG = get_config()
+
 
 def create_connection() -> mysql.connector.MySQLConnection:
     """Crée une connexion MySQL en utilisant les paramètres du fichier config.json."""
@@ -348,6 +421,7 @@ def create_connection() -> mysql.connector.MySQLConnection:
     except Error as e:
         raise ConnectionError(f"Database connection error: {e}")
 
+
 def ensure_database(conn):
     dbname = CONFIG["DB_NAME"]
     if dbname in SYSTEM_SCHEMAS:
@@ -359,6 +433,7 @@ def ensure_database(conn):
     finally:
         cur.close()
 
+
 def use_database(conn):
     dbname = CONFIG["DB_NAME"]
     cur = conn.cursor()
@@ -367,6 +442,7 @@ def use_database(conn):
         print(f"Utilisation de la base `{dbname}`.")
     finally:
         cur.close()
+
 
 def preview_wipe(conn):
     dbname = CONFIG["DB_NAME"]
@@ -392,6 +468,7 @@ def preview_wipe(conn):
     print(f"- Tables     : {len(tables)} -> {tables}")
     cur.close()
 
+
 def confirm_and_wipe(conn):
     dbname = CONFIG["DB_NAME"]
     cur = conn.cursor()
@@ -399,37 +476,50 @@ def confirm_and_wipe(conn):
         cur.execute("SET FOREIGN_KEY_CHECKS=0")
 
         cur.execute("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA=%s", (dbname,))
-        for (vname,) in cur.fetchall(): cur.execute(f"DROP VIEW IF EXISTS `{vname}`")
+        for (vname,) in cur.fetchall():
+            cur.execute(f"DROP VIEW IF EXISTS `{vname}`")
 
         cur.execute("SELECT TRIGGER_NAME FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA=%s", (dbname,))
         for (tname,) in cur.fetchall():
-            try: cur.execute(f"DROP TRIGGER `{tname}`")
-            except Error: pass
+            try:
+                cur.execute(f"DROP TRIGGER `{tname}`")
+            except Error:
+                pass
 
         cur.execute("SELECT EVENT_NAME FROM INFORMATION_SCHEMA.EVENTS WHERE EVENT_SCHEMA=%s", (dbname,))
         for (ename,) in cur.fetchall():
-            try: cur.execute(f"DROP EVENT IF EXISTS `{ename}`")
-            except Error: pass
+            try:
+                cur.execute(f"DROP EVENT IF EXISTS `{ename}`")
+            except Error:
+                pass
 
         cur.execute("SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA=%s AND ROUTINE_TYPE='PROCEDURE'", (dbname,))
         for (pname,) in cur.fetchall():
-            try: cur.execute(f"DROP PROCEDURE IF EXISTS `{pname}`")
-            except Error: pass
+            try:
+                cur.execute(f"DROP PROCEDURE IF EXISTS `{pname}`")
+            except Error:
+                pass
         cur.execute("SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA=%s AND ROUTINE_TYPE='FUNCTION'", (dbname,))
         for (fname,) in cur.fetchall():
-            try: cur.execute(f"DROP FUNCTION IF EXISTS `{fname}`")
-            except Error: pass
+            try:
+                cur.execute(f"DROP FUNCTION IF EXISTS `{fname}`")
+            except Error:
+                pass
 
         cur.execute("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=%s AND TABLE_TYPE='BASE TABLE'", (dbname,))
-        for (tname,) in cur.fetchall(): cur.execute(f"DROP TABLE IF EXISTS `{tname}`")
+        for (tname,) in cur.fetchall():
+            cur.execute(f"DROP TABLE IF EXISTS `{tname}`")
 
         print("✅ Base vidée avec succès.")
     except Error as e:
         print_sql_error("❌ Erreur pendant la suppression", e)
     finally:
-        try: cur.execute("SET FOREIGN_KEY_CHECKS=1")
-        except Error: pass
+        try:
+            cur.execute("SET FOREIGN_KEY_CHECKS=1")
+        except Error:
+            pass
         cur.close()
+
 
 def run_embedded_sql(conn):
     cur = conn.cursor()
@@ -444,14 +534,19 @@ def run_embedded_sql(conn):
     finally:
         cur.close()
 
+
 def insertGameIntoDatabase(conn, games_data):
     """
-    games_data attend des tuples de 8 valeurs:
-    (biblio_id, titre, author, platform, platform_id, console_koha_id, console_type_id, createdAt)
+    games_data attend des tuples de 9 valeurs:
+    (biblio_id, titre, author, platform, platform_id, console_koha_id,
+     console_type_id, required_accessories_koha_ids_json, createdAt)
+    
+    Note: required_accessories_koha_ids_json est déjà un JSON string des koha_id
     """
     sql = """
     INSERT INTO games
-        (biblio_id, titre, author, platform, platform_id, console_koha_id, console_type_id, required_accessories, createdAt)
+        (biblio_id, titre, author, platform, platform_id, console_koha_id, 
+         console_type_id, required_accessories, createdAt)
     VALUES
         (%s, %s, %s, %s, %s, %s, %s, %s, %s)
     ON DUPLICATE KEY UPDATE
@@ -464,10 +559,25 @@ def insertGameIntoDatabase(conn, games_data):
         required_accessories = VALUES(required_accessories),
         lastUpdatedAt = NOW()
     """
+
+    prepared_data = []
+    for g in games_data:
+        koha_ids_json = g[7]  # JSON string des koha_id
+        
+        # Convertir JSON string -> liste d'entiers
+        koha_ids = json.loads(koha_ids_json) if koha_ids_json else []
+        
+        # Résoudre koha_id -> accessoire_type_id
+        accessory_type_ids = resolve_accessory_type_ids_from_koha(conn, koha_ids)
+        
+        # Stocker en JSON dans la table
+        prepared_data.append(g[:7] + (json.dumps(accessory_type_ids), g[8]))
+
     with conn.cursor() as cur:
-        cur.executemany(sql, games_data)
+        cur.executemany(sql, prepared_data)
     conn.commit()
-    print(f">>> {len(games_data)} jeux insérés/mis à jour")
+    print(f">>> {len(games_data)} jeux insérés/mis à jour avec accessoires_type_id")
+
 
 
 def insert_console(conn, consoles):
@@ -566,75 +676,143 @@ def insert_console(conn, consoles):
     
     print("=== SEED CONSOLES KOHA: terminé ===\n")
 
+
+def get_accessoire_type_id_map(conn):
+    """
+    Retourne un dict {name_lower: id} pour accessoires_type.
+    """
+    m = {}
+    with conn.cursor(dictionary=True) as cur:
+        cur.execute("SELECT id, name FROM accessoires_type")
+        for row in cur.fetchall():
+            key = (row["name"] or "").strip().lower()
+            if key:
+                m[key] = row["id"]
+    return m
+
+
 def insert_accessoires(conn, accessoires):
     """
-    Upsert des accessoires liés à leurs console_type_id.
+    Upsert des accessoires en les groupant par accessoires_type.
+    Règle:
+      - on nettoie le nom (on enlève ' (copie X)')
+      - SI ET SEULEMENT SI le nom n'existe pas déjà dans accessoires_type,
+        on crée un nouveau type
+      - sinon on réutilise l'id existant
+
     Nécessite:
-      - la table console_type déjà remplie
-      - un index unique sur accessoires.koha_id
+      - console_type déjà rempli (pour les consoles JSON)
+      - accessoires_type.name UNIQUE
+      - index unique sur accessoires_stock.koha_id
     """
     if not accessoires:
         print("⚠️ Aucun accessoire à insérer")
         return
 
-    type_map = get_console_type_id_map(conn)
+    # Map des consoles (nom console -> console_type_id)
+    console_type_map = get_console_type_id_map(conn)
+
+    # Cache en mémoire pour éviter de requery 50 fois le même nom
+    # key = nom nettoyé en minuscule, value = id dans accessoires_type
+    type_cache = {}
 
     tuples, skipped = [], 0
-    for d in accessoires:
-        name = (d.get("name") or "").strip()
-        koha_id = d.get("koha_id")
-        platforms = d.get("platforms") or []
-        hidden = d.get("hidden", 0)
 
-        if not name or koha_id in (None, ""):
-            skipped += 1
-            continue
-
-        try:
-            koha_id = int(koha_id)
-        except Exception:
-            skipped += 1
-            continue
-
-        ids = []
-        for p in platforms:
-            cid = type_map.get(p.strip().lower())
-            if cid:
-                ids.append(cid)
-
-        console_json = json.dumps(ids) if ids else "null"
-
-        tuples.append((name, console_json, koha_id, hidden))
-
-    if not tuples:
-        print("⚠️ Rien d’insérable (skipped: %d)" % skipped)
-        return
-
-    sql = """
-        INSERT INTO accessoires
-            (name, consoles, koha_id, hidden, lastUpdatedAt, createdAt)
-        VALUES
-            (%s, CAST(%s AS JSON), %s, %s, NOW(), NOW())
-        ON DUPLICATE KEY UPDATE
-            name = VALUES(name),
-            consoles = CAST(VALUES(consoles) AS JSON),
-            hidden = VALUES(hidden),
-            lastUpdatedAt = NOW()
-    """
-
-    BATCH = 500
-    affected = 0
     try:
-        with conn.cursor() as cur:
+        with conn.cursor(dictionary=True) as cur:
+            for d in accessoires:
+                raw_name = (d.get("name") or "").strip()
+                clean_name = sanitize_accessory_name(raw_name)
+
+                koha_id = d.get("koha_id")
+                platforms = d.get("platforms") or []
+                hidden = d.get("hidden", 0)
+                available = d.get("available", 1)
+
+                # On skippe si pas de nom ou pas de koha_id
+                if not clean_name or koha_id in (None, ""):
+                    skipped += 1
+                    continue
+
+                try:
+                    koha_id = int(koha_id)
+                except Exception:
+                    skipped += 1
+                    continue
+
+                # 1) Résoudre / créer accessoires_type uniquement si NOM NOUVEAU
+                key = clean_name.lower()
+                acc_type_id = type_cache.get(key)
+
+                if acc_type_id is None:
+                    # On regarde d'abord en BD si ce nom existe déjà
+                    cur.execute(
+                        "SELECT id FROM accessoires_type WHERE name = %s",
+                        (clean_name,)
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        acc_type_id = row["id"]
+                    else:
+                        # Nom vraiment nouveau -> on crée le type
+                        cur.execute(
+                            "INSERT INTO accessoires_type (name) VALUES (%s)",
+                            (clean_name,)
+                        )
+                        acc_type_id = cur.lastrowid
+
+                    # On garde en cache pour les autres éléments du même type
+                    type_cache[key] = acc_type_id
+
+                # 2) Consoles compatibles -> liste d'id de console_type
+                ids = []
+                for p in platforms:
+                    cid = console_type_map.get(p.strip().lower())
+                    if cid:
+                        ids.append(cid)
+
+                console_json = json.dumps(ids) if ids else "null"
+
+                # 3) On prépare la ligne pour accessoires_stock
+                tuples.append(
+                    (acc_type_id, clean_name, console_json, koha_id, hidden, available)
+                )
+
+        if not tuples:
+            print("⚠️ Rien d’insérable (skipped: %d)" % skipped)
+            return
+
+        # 4) Upsert dans accessoires_stock
+        sql = """
+            INSERT INTO accessoires_stock
+                (accessoire_type_id, name, consoles, koha_id, hidden, available, lastUpdatedAt, createdAt)
+            VALUES
+                (%s, %s, CAST(%s AS JSON), %s, %s, %s, NOW(), NOW())
+            ON DUPLICATE KEY UPDATE
+                accessoire_type_id = VALUES(accessoire_type_id),
+                name = VALUES(name),
+                consoles = CAST(VALUES(consoles) AS JSON),
+                hidden = VALUES(hidden),
+                available = VALUES(available),
+                lastUpdatedAt = NOW()
+        """
+
+        BATCH = 500
+        affected = 0
+        with conn.cursor() as cur2:
             for i in range(0, len(tuples), BATCH):
-                cur.executemany(sql, tuples[i:i+BATCH])
-                affected += cur.rowcount
+                cur2.executemany(sql, tuples[i:i+BATCH])
+                affected += cur2.rowcount
+
         conn.commit()
         print(f"✅ Upsert accessoires: {affected} lignes (skipped: {skipped})")
+
     except mysql.connector.Error as err:
         print(f"❌ Erreur MySQL pendant l'upsert accessoires : {err}")
         conn.rollback()
+
     print("=== SEED ACCESSOIRES KOHA: terminé ===\n")
+
 
 
 def print_sql_error(prefix, e: Error):
@@ -642,6 +820,7 @@ def print_sql_error(prefix, e: Error):
     sqlstate = getattr(e, "sqlstate", None)
     msg = getattr(e, "msg", str(e))
     print(f"{prefix} : [{err_no}/{sqlstate}] {msg}")
+
 
 def get_console_type_id_map(conn):
     """Retourne un dict {name_lower: id} pour console_type."""
@@ -652,11 +831,37 @@ def get_console_type_id_map(conn):
             m[row["name"].strip().lower()] = row["id"]
     return m
 
+
 def get_known_accessory_ids(conn):
     ids = set()
     with conn.cursor() as cur:
-        cur.execute("SELECT koha_id FROM accessoires")
+        cur.execute("SELECT koha_id FROM accessoires_stock")
         for (kid,) in cur.fetchall():
             if kid is not None:
                 ids.add(int(kid))
     return ids
+
+def resolve_accessory_type_ids_from_koha(conn, koha_ids):
+    """
+    Prend une liste de koha_id (integers) et retourne
+    une liste d'accessoire_type_id correspondants.
+    Ignore les koha_id inconnus.
+    """
+    if not koha_ids:
+        return []
+
+    with conn.cursor(dictionary=True) as cur:
+        # Récupérer les accessoire_type_id depuis accessoires_stock
+        format_strings = ",".join(["%s"] * len(koha_ids))
+        cur.execute(
+            f"""
+            SELECT DISTINCT accessoire_type_id 
+            FROM accessoires_stock 
+            WHERE koha_id IN ({format_strings})
+            """,
+            tuple(koha_ids)
+        )
+        # Retourner la liste des accessoire_type_id
+        type_ids = [row["accessoire_type_id"] for row in cur.fetchall()]
+        return type_ids
+
