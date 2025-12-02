@@ -73,6 +73,11 @@ CREATE TABLE IF NOT EXISTS `stations` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS `policies` (
+  `policies` LONGTEXT,
+  `lastUpdatedAt` DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS `reservation` (
   `id` VARCHAR(255) NOT NULL UNIQUE,
   `console_id` INT NOT NULL,
