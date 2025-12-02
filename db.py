@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `isAdmin` TINYINT NOT NULL,
   `lastUpdatedAt` DATETIME NOT NULL,
   `createdAt` DATETIME NOT NULL,
+  `lastLogin` DATETIME DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -234,12 +235,6 @@ ALTER TABLE `reservation`
 ALTER TABLE `reservation`
     ADD CONSTRAINT `reservation_fk6`
     FOREIGN KEY (`game3_id`) REFERENCES `games`(`id`)
-    ON UPDATE CASCADE ON DELETE RESTRICT;
-
--- reservation.cours_id -> cours.id
-ALTER TABLE `reservation`
-    ADD CONSTRAINT `reservation_fk7`
-    FOREIGN KEY (`cours_id`) REFERENCES `cours`(`id`)
     ON UPDATE CASCADE ON DELETE RESTRICT;
 
 -- reservation_hold.user_id -> users.id
