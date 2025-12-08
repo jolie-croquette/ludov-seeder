@@ -310,9 +310,21 @@ SELECT
     SUM(CASE WHEN cs.is_active = 1 AND cs.holding = 0 THEN 1 ELSE 0 END) as active_units,
     SUM(CASE WHEN cs.is_active = 0 THEN 1 ELSE 0 END) as inactive_units
 FROM console_type ct
-LEFT JOIN console_stock cs ON ct.id = cs.console_type_id
-GROUP BY ct.id, ct.name, ct.picture, ct.description
-ORDER BY ct.name;
+LEFT JOIN console_stock cs 
+    ON ct.id = cs.console_type_id
+WHERE EXISTS (
+    SELECT 1
+    FROM stations s
+    WHERE JSON_CONTAINS(
+        s.consoles,
+        CAST(ct.id AS JSON),
+        '$'
+    )
+)
+GROUP BY 
+    ct.id, ct.name
+ORDER BY 
+    ct.name;
 
 SET FOREIGN_KEY_CHECKS=1;
 """
